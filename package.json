@@ -1,0 +1,23 @@
+{
+  "name": "sajilo-restaurant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server.ts",
+    "dev:lan": "node --watch --env-file=lan.env server.ts",
+    "start": "node server.ts",
+    "test": "node --test tests/server.test.mjs",
+    "typecheck": "tsc",
+    "test:ui": "playwright test",
+    "format": "prettier --write *.ts *.js *.css *.html *.json tests/*"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.2",
+    "prettier": "^3.9.9",
+    "typescript": "^7.0.2"
+  }
+}
