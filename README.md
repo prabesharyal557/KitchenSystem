@@ -46,3 +46,7 @@ Run `npm run android:debug` to create `android/app/build/outputs/apk/debug/app-d
 The default server listens only on `127.0.0.1`. After local setup, a trusted-network deployment can set `HOST=0.0.0.0`; point every device at this one server. Use HTTPS via a reverse proxy and set `SECURE_COOKIE=1` for a hosted deployment. `PORT` defaults to 3000, and `DATA_DIR` can point to persistent storage. Do not run multiple processes against this application database; this version is designed for one restaurant/server process. Back up the database (stop the server before copying the data directory, or use SQLite's backup facility). This repository includes no hosting or automated backup setup.
 
 The separate kitchen workspace and new kitchen accounts have been removed. Existing kitchen staff records and payroll remain available to managers, but kitchen-role sign-in and old kitchen sessions are blocked. A manager can reassign a former kitchen account to an available role.
+
+## Free hosted trial
+
+`render.yaml` can deploy the app on Render's free plan for testing staff phones over HTTPS. Its SQLite database is stored in temporary service storage, so a restart or redeploy can erase accounts, orders, sales and payments. Use it only for trials; a production restaurant needs persistent storage.
