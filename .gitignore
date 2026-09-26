@@ -12,3 +12,5 @@ android-sdk/
 android/.gradle/
 android/local.properties
 android/app/build/
+backups/
+d1-export.sql
