@@ -691,7 +691,7 @@ createServer(async (req, res) => {
     }
     if (path === "/download/app-debug.apk") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
-      const apk = join(root, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
+      const apk = join(root, "downloads", "Sajilo-Restaurant.apk");
       requireThat(existsSync(apk), "APK has not been built yet.", 404);
       res.writeHead(200, {
         "Content-Type": "application/vnd.android.package-archive",
