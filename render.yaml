@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: sajilo-restaurant
+    runtime: docker
+    plan: starter
+    region: singapore
+    healthCheckPath: /health
+    disk:
+      name: restaurant-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DATA_DIR
+        value: /var/data
+      - key: SECURE_COOKIE
+        value: "1"

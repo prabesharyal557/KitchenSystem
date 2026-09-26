@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Sajilo Restaurant</string>
+    <string name="title_activity_main">Sajilo Restaurant</string>
+    <string name="package_name">com.prabesharyal557.kitchensystem</string>
+    <string name="custom_url_scheme">com.prabesharyal557.kitchensystem</string>
+</resources>

@@ -105,24 +105,57 @@ test("staff accounts, hashing, role boundaries and private payroll", async () =>
   });
   assert.equal(r.status, 200);
   staffId = r.data.staff.find((s) => s.username === "waiter").id;
+  assert.equal(
+    (
+      await action("staff.save", {
+        name: "Removed",
+        username: "kitchen",
+        password: "kitchen-test-password",
+        role: "kitchen",
+        salary: 30000,
+        active: true,
+      })
+    ).status,
+    400,
+  );
   await action("staff.save", {
-    name: "Kitchen Test",
-    username: "kitchen",
-    password: "kitchen-test-password",
-    role: "kitchen",
+    name: "Legacy staff",
+    username: "legacy",
+    password: "legacy-test-password",
+    role: "waiter",
     salary: 30000,
     active: true,
   });
+  kitchenCookie = (
+    await request("login", {
+      username: "legacy",
+      password: "legacy-test-password",
+    })
+  ).cookie;
+  const legacyDb = new DatabaseSync(join(dir, "sajilo.sqlite"));
+  const legacyState = JSON.parse(
+    legacyDb.prepare("SELECT body FROM state WHERE id=1").get().body,
+  );
+  legacyState.staff.find((s) => s.username === "legacy").role = "kitchen";
+  legacyDb
+    .prepare("UPDATE state SET body=? WHERE id=1")
+    .run(JSON.stringify(legacyState));
+  legacyDb.close();
+  assert.equal((await request("state", undefined, kitchenCookie)).status, 403);
+  assert.equal(
+    (
+      await request("login", {
+        username: "legacy",
+        password: "legacy-test-password",
+      })
+    ).status,
+    403,
+  );
+  assert.equal((await fetch(base + "/kitchen.html")).status, 404);
   waiterCookie = (
     await request("login", {
       username: "waiter",
       password: "waiter-test-password",
-    })
-  ).cookie;
-  kitchenCookie = (
-    await request("login", {
-      username: "kitchen",
-      password: "kitchen-test-password",
     })
   ).cookie;
   assert.equal(
@@ -224,7 +257,7 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
       await action(
         "order.advance",
         { id: orderId, status: "new" },
-        kitchenCookie,
+        managerCookie,
       )
     ).status,
     200,
@@ -234,7 +267,7 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
       await action(
         "order.advance",
         { id: orderId, status: "new" },
-        kitchenCookie,
+        managerCookie,
       )
     ).status,
     409,
@@ -248,7 +281,7 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
       await action(
         "order.advance",
         { id: orderId, status: "ready" },
-        kitchenCookie,
+        managerCookie,
       )
     ).status,
     403,
@@ -448,8 +481,8 @@ test("multiple devices retain independent sessions and logout only ends one sess
       password: "replacement-test-password",
     }),
     request("login", {
-      username: "kitchen",
-      password: "kitchen-test-password",
+      username: "manager",
+      password: "test-manager-password",
     }),
   ]);
   assert.ok(sessions.every((s) => s.status === 200));
@@ -459,7 +492,7 @@ test("multiple devices retain independent sessions and logout only ends one sess
   );
   assert.deepEqual(
     states.map((s) => s.data.user.role),
-    ["manager", "waiter", "waiter", "kitchen"],
+    ["manager", "waiter", "waiter", "manager"],
   );
   await request("logout", {}, sessions[1].cookie);
   assert.equal(

@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "node --watch server.ts",
     "dev:lan": "node --watch --env-file=lan.env server.ts",
+    "android:assets": "node scripts/sync-mobile-assets.mjs",
+    "android:sync": "npm run android:assets && node --require ./scripts/capacitor-shell-fix.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android",
+    "android:debug": "npm run android:sync && set \"GRADLE_USER_HOME=%CD%\\.gradle-apk\" && set \"ANDROID_USER_HOME=%CD%\\.android-apk\" && set \"JAVA_HOME=C:\\Program Files\\Android\\Android Studio\\jbr\" && cd android && gradlew.bat --no-daemon assembleDebug",
     "start": "node server.ts",
     "test": "node --test tests/server.test.mjs",
     "typecheck": "tsc",
@@ -15,9 +18,14 @@
     "node": ">=24.0.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.2",
     "prettier": "^3.9.9",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2"
   }
 }

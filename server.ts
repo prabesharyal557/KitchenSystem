@@ -47,6 +47,8 @@ type Order = {
   items: Line[];
   createdAt: string;
   paid: boolean;
+  servedAt?: string;
+  servedById?: string;
 };
 type Sale = {
   id: string;
@@ -207,6 +209,11 @@ function account(req: IncomingMessage, state: State) {
   const u = state.staff.find((u) => u.id === s?.staffId && u.active);
   requireThat(u, "Please sign in.", 401);
   requireThat(
+    u!.role !== "kitchen",
+    "The kitchen workspace has been removed. Ask your manager to update your role.",
+    403,
+  );
+  requireThat(
     state.settings.open || u!.role === "manager",
     "Restaurant is closed. Staff access is suspended until a manager opens it.",
     403,
@@ -323,10 +330,9 @@ function mutate(state: State, u: Staff, action: string, p: any) {
   }
   if (action === "order.advance") {
     requireThat(
-      u.role === "manager" ||
-        (u.role === "kitchen" && p.status !== "ready") ||
+      (u.role === "manager" && p.status !== "ready") ||
         (u.role === "waiter" && p.status === "ready"),
-      "Only kitchen staff can mark food ready; only waiters can mark it served.",
+      "Only managers can mark orders ready. Only waiters can mark ready orders served.",
       403,
     );
     const o = state.orders.find((o) => o.id === p.id && !o.paid);
@@ -345,6 +351,10 @@ function mutate(state: State, u: Staff, action: string, p: any) {
         string
       >
     )[o!.status];
+    if (o!.status === "served") {
+      o!.servedAt = now();
+      o!.servedById = u.id;
+    }
     return;
   }
   if (action === "sale.pay") {
@@ -448,10 +458,7 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       !state.staff.some((s) => s.username === name && s.id !== p.id),
       "Username is already taken.",
     );
-    requireThat(
-      ["manager", "waiter", "kitchen"].includes(p.role),
-      "Invalid role.",
-    );
+    requireThat(["manager", "waiter"].includes(p.role), "Invalid role.");
     const active = boolean(p.active);
     requireThat(
       p.id !== u.id || (active && p.role === "manager"),
@@ -513,7 +520,6 @@ const assets: Record<string, string> = {
   "/index.html": "index.html",
   "/manager.html": "manager.html",
   "/waiter.html": "waiter.html",
-  "/kitchen.html": "kitchen.html",
   "/app.js": "app.js",
   "/style.css": "style.css",
   "/auth.css": "auth.css",
@@ -526,6 +532,22 @@ const mime: Record<string, string> = {
   svg: "image/svg+xml",
 };
 createServer(async (req, res) => {
+  const origin = req.headers.origin;
+  const capacitorOrigin = origin === "capacitor://localhost" || origin === "http://localhost";
+  if (capacitorOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", origin!);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS" && new URL(req.url || "/", "http://localhost").pathname.startsWith("/api/")) {
+    if (capacitorOrigin) {
+      res.writeHead(204, { "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, X-Sajilo-Session" });
+      res.end();
+      return;
+    }
+    output(res, 403, { error: "Cross-origin request rejected." });
+    return;
+  }
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "same-origin");
@@ -549,7 +571,7 @@ createServer(async (req, res) => {
           "JSON content type required.",
           415,
         );
-        if (req.headers.origin)
+        if (req.headers.origin && !capacitorOrigin)
           requireThat(
             new URL(req.headers.origin).host === req.headers.host,
             "Cross-origin request rejected.",
@@ -618,6 +640,11 @@ createServer(async (req, res) => {
         requireThat(u && valid, "Invalid username or password.", 401);
         requireThat(u!.active, "Your account has been suspended.", 403);
         requireThat(
+          u!.role !== "kitchen",
+          "The kitchen workspace has been removed. Ask your manager to update your role.",
+          403,
+        );
+        requireThat(
           s.settings.open || u!.role === "manager",
           "Restaurant is closed. Please ask your manager to reopen it.",
           403,
@@ -656,6 +683,11 @@ createServer(async (req, res) => {
         return;
       }
       throw new HttpError(404, "Not found.");
+    }
+    if (path === "/health") {
+      requireThat(req.method === "GET", "Method not allowed.", 405);
+      output(res, 200, { ok: true });
+      return;
     }
     requireThat(req.method === "GET", "Method not allowed.", 405);
     const file = assets[path];

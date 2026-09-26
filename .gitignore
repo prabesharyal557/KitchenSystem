@@ -4,3 +4,11 @@ node_modules/
 .npm-cache/
 test-results/
 playwright-report/
+mobile-www/
+android-sdk/
+.gradle/
+.gradle-apk/
+.android-apk/
+android/.gradle/
+android/local.properties
+android/app/build/

@@ -3,6 +3,8 @@
   "use strict";
   const app = document.getElementById("app"),
     workspace = document.body.dataset.role;
+  const isAndroidApp = Boolean(window.Capacitor?.isNativePlatform?.());
+  let apiBase = isAndroidApp ? (localStorage.getItem("sajilo-server-url") || "").replace(/\/$/, "") : "";
   // The tab stores only a selector; the authentication token remains HttpOnly.
   const newSessionScope = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
@@ -49,11 +51,7 @@
   let db,
     view =
       location.hash.slice(1) ||
-      (workspace === "manager"
-        ? "dashboard"
-        : workspace === "kitchen"
-          ? "kitchen"
-          : "tables");
+      (workspace === "manager" ? "dashboard" : "tables");
   let period = "day",
     reportDate = today(),
     staffMonth = month(),
@@ -71,7 +69,7 @@
     latestAlertState;
   const orderAlerts = new Map();
   function initOrderAlerts() {
-    if (!["waiter", "kitchen"].includes(workspace)) return;
+    if (!["waiter", "manager"].includes(workspace)) return;
     alertStorageKey = `sajilo-alerts:${db.user.id}:${workspace}`;
     try {
       seenAlerts = new Set(
@@ -85,7 +83,7 @@
     region.setAttribute("aria-label", "Order notifications");
     region.innerHTML = `<div class="alert-controls">${button("Enable sound & desktop alerts", "enable-alerts", "", true)}</div><div class="order-alert-list" aria-live="polite" aria-relevant="additions"></div>`;
     document.body.append(region);
-    syncOrderAlerts(db);
+    syncOrderAlerts(db, true);
   }
   async function enableOrderAlerts() {
     try {
@@ -138,12 +136,27 @@
       /* Visual alerts remain available when audio is blocked. */
     }
   }
-  function syncOrderAlerts(state) {
+  function syncOrderAlerts(state, initial = false) {
     if (!alertStorageKey) return;
     latestAlertState = state;
-    const status = workspace === "kitchen" ? "new" : "ready";
-    const relevant = state.orders.filter((o) => !o.paid && o.status === status);
-    const current = new Set(relevant.map((o) => `${o.id}:${status}`));
+    // Completed bills from before sign-in are history, not new notifications.
+    // Later polls still catch an order served and paid between two updates.
+    if (initial) {
+      for (const order of state.orders) {
+        if (order.paid && order.status === "served")
+          seenAlerts.add(`${order.id}:served`);
+      }
+    }
+    const relevant = state.orders.filter((o) =>
+      workspace === "manager"
+        ? !o.paid && o.status === "new"
+        : (!o.paid && o.status === "ready") ||
+          (o.status === "served" &&
+            o.servedAt &&
+            Date.now() - Date.parse(o.servedAt) < 12 * 60 * 60 * 1000 &&
+            o.servedById !== state.user.id),
+    );
+    const current = new Set(relevant.map((o) => `${o.id}:${o.status}`));
     for (const [key, alert] of orderAlerts) {
       if (!current.has(key)) {
         alert.element.remove();
@@ -153,12 +166,16 @@
     }
     let added = false;
     for (const order of relevant) {
-      const key = `${order.id}:${status}`;
+      const key = `${order.id}:${order.status}`;
       if (seenAlerts.has(key)) continue;
       seenAlerts.add(key);
       added = true;
       const title =
-        workspace === "kitchen" ? "New order received" : "Order ready to serve";
+        workspace === "manager"
+          ? "New order received"
+          : order.status === "served"
+            ? "Order marked served"
+            : "Order ready to serve";
       const detail = `Table ${order.table} · #${order.id.slice(0, 6)} · ${order.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}`;
       const element = document.createElement("section");
       element.className = "order-alert";
@@ -204,7 +221,9 @@
     if (!orderAlerts.has(key)) return;
     db = latestAlertState;
     document.querySelector("dialog[open]")?.close();
-    navigate("kitchen");
+    navigate(
+      orderAlerts.get(key).order.status === "served" ? "history" : "orders",
+    );
     dismissOrderAlert(key);
   }
   async function api(path, payload) {
@@ -212,15 +231,19 @@
     const signingIn = path === "login" || path === "setup";
     const scope = signingIn ? newSessionScope() : sessionScope;
     const response = await fetch(
-      "/api/" + path,
+      apiBase + "/api/" + path,
       payload === undefined
-        ? { headers: { "X-Sajilo-Session": scope } }
+        ? {
+            headers: { "X-Sajilo-Session": scope },
+            credentials: isAndroidApp ? "include" : "same-origin",
+          }
         : {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "X-Sajilo-Session": scope,
             },
+            credentials: isAndroidApp ? "include" : "same-origin",
             body: JSON.stringify(payload),
           },
     );
@@ -277,24 +300,18 @@
             ["dashboard", "◈", "Overview"],
             ["online", "◎", "Online orders"],
             ["tables", "▦", "Tables"],
-            ["kitchen", "♨", "Active orders"],
+            ["orders", "♨", "Active orders"],
             ["menu", "☷", "Food menu"],
             ["staff", "♙", "Staff & payroll"],
             ["sales", "↗", "Sales reports"],
             ["settings", "⚙", "Settings"],
           ]
-        : workspace === "waiter"
-          ? [
-              ["tables", "▦", "Tables"],
-              ["order", "+", "Take order"],
-              ["kitchen", "✓", "Ready to serve"],
-              ["history", "◷", "Order history"],
-            ]
-          : [
-              ["kitchen", "♨", "Kitchen board"],
-              ["tables", "▦", "Tables"],
-              ["history", "◷", "Order history"],
-            ];
+        : [
+            ["tables", "▦", "Tables"],
+            ["order", "+", "Take order"],
+            ["orders", "✓", "Ready to serve"],
+            ["history", "◷", "Order history"],
+          ];
     return `<aside class="sidebar"><a class="brand" href="#${workspace === "manager" ? "dashboard" : "tables"}">sajilo<span>●</span></a><div class="rest"><div class="restaurant-icon">H</div><div><b>${esc(db.settings.name)}</b><small>${esc(workspace)} workspace</small></div></div><div class="nav-label">WORKSPACE</div><nav>${links.map(([v, icon, label]) => `<button data-action="navigate" data-view="${v}" class="${view === v || (view === "completed" && v === "sales") ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""} title="${label}" aria-label="${label}"><i>${icon}</i><span>${label}</span>${v === "online" ? "<small>SOON</small>" : ""}</button>`).join("")}</nav><div class="side-foot"><div class="open-state ${db.settings.open ? "" : "closed"}">● Restaurant ${db.settings.open ? "open" : "closed"}</div><div class="profile"><div class="avatar">${esc(db.user.name.charAt(0))}</div><div><b>${esc(db.user.name)}</b><small>${esc(db.user.role)}</small></div></div>${button("↪ Sign out", "logout", "", true)}</div></aside>`;
   }
   function render() {
@@ -305,7 +322,7 @@
         ? {
             dashboard,
             tables,
-            kitchen,
+            orders,
             menu: menuView,
             staff,
             sales,
@@ -315,16 +332,8 @@
             order,
             history,
           }
-        : workspace === "waiter"
-          ? { tables, order, history, kitchen }
-          : { kitchen, tables, history };
-    if (!pages[view])
-      view =
-        workspace === "manager"
-          ? "dashboard"
-          : workspace === "waiter"
-            ? "tables"
-            : "kitchen";
+        : { tables, order, history, orders };
+    if (!pages[view]) view = workspace === "manager" ? "dashboard" : "tables";
     app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online ? "" : "offline"}">● ${online ? "Live · syncs every 4s" : "Connection lost · retrying"}</span><time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
   }
   function salesFor(date) {
@@ -364,7 +373,7 @@
     return page(
       "Your restaurant, at a glance.",
       "Today’s service, sales and team — all in one place.",
-      `<section class="metrics">${metric("TOTAL SALES · TODAY", money(sum(rows, "total")), "Explore day, week, month & year", "sales")}${metric("ACTIVE TABLES", `${db.tables.filter((t) => t.status === "busy").length}<em> / ${db.tables.length}</em>`, `${db.tables.filter((t) => t.status === "pending").length} reserved · Live floor status`, "tables")}${metric("ACTIVE ORDERS", active.length, "Follow each ticket through the kitchen", "kitchen")}${metric("COMPLETED SALES", rows.length, "Paid bills · View period breakdown", "completed")}</section><div class="grid">${card("Sales over the last 7 days", `<div class="chart-total">${money(values.reduce((a, b) => a + b, 0))}<small>Total collected · includes tax</small></div><div class="chart">${values.map((v, i) => `<div class="chart-column"><span>${v ? money(v) : "—"}</span><svg class="chart-bar" viewBox="0 0 48 130" role="img" aria-label="${days[i]}: ${money(v)}"><rect x="10" y="0" width="28" height="130" rx="5" fill="#f1f5ea"/><rect x="10" y="${130 - Math.max(2, (v / max) * 130)}" width="28" height="${Math.max(2, (v / max) * 130)}" rx="4" fill="${i === 6 ? "#315f43" : "#bfd39f"}"/></svg><small>${new Date(days[i] + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" })}</small></div>`).join("")}</div>`, '<span class="tag">LAST 7 DAYS</span>')}${card("Most selling items", topItems(rows), '<span class="tag">TODAY</span>')}</div><div class="grid lower">${card(
+      `<section class="metrics">${metric("TOTAL SALES · TODAY", money(sum(rows, "total")), "Explore day, week, month & year", "sales")}${metric("ACTIVE TABLES", `${db.tables.filter((t) => t.status === "busy").length}<em> / ${db.tables.length}</em>`, `${db.tables.filter((t) => t.status === "pending").length} reserved · Live floor status`, "tables")}${metric("ACTIVE ORDERS", active.length, "Track new, ready and served orders", "orders")}${metric("COMPLETED SALES", rows.length, "Paid bills · View period breakdown", "completed")}</section><div class="grid">${card("Sales over the last 7 days", `<div class="chart-total">${money(values.reduce((a, b) => a + b, 0))}<small>Total collected · includes tax</small></div><div class="chart">${values.map((v, i) => `<div class="chart-column"><span>${v ? money(v) : "—"}</span><svg class="chart-bar" viewBox="0 0 48 130" role="img" aria-label="${days[i]}: ${money(v)}"><rect x="10" y="0" width="28" height="130" rx="5" fill="#f1f5ea"/><rect x="10" y="${130 - Math.max(2, (v / max) * 130)}" width="28" height="${Math.max(2, (v / max) * 130)}" rx="4" fill="${i === 6 ? "#315f43" : "#bfd39f"}"/></svg><small>${new Date(days[i] + "T00:00:00Z").toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" })}</small></div>`).join("")}</div>`, '<span class="tag">LAST 7 DAYS</span>')}${card("Most selling items", topItems(rows), '<span class="tag">TODAY</span>')}</div><div class="grid lower">${card(
         "Live service",
         active
           .slice(0, 5)
@@ -373,8 +382,8 @@
               `<div class="sale-row"><div class="grow"><b>Table ${o.table}</b><small>#${o.id.slice(0, 6)} · ${stamp(o.createdAt)}</small></div><span class="status ${o.status}">${o.status}</span></div>`,
           )
           .join("") || empty("No active orders. Ready for the next guest."),
-        button("View orders →", "navigate", 'data-view="kitchen"', true),
-      )}${card("Team & operations", `<div class="sale-row"><span>Active staff accounts</span><b>${db.staff.filter((s) => s.active).length}</b></div><div class="sale-row"><span>Tax on new bills</span><b>${db.settings.taxRate}%</b></div><div class="sale-row"><span>Restaurant status</span><span class="tag">${db.settings.open ? "OPEN" : "CLOSED"}</span></div>`, button("Settings", "navigate", 'data-view="settings"', true))}</div>`,
+        button("View orders →", "navigate", 'data-view="orders"', true),
+      )}${card("Team & operations", `<div class="sale-row"><span>Active staff accounts</span><b>${db.staff.filter((s) => s.active && s.role !== "kitchen").length}</b></div><div class="sale-row"><span>Tax on new bills</span><b>${db.settings.taxRate}%</b></div><div class="sale-row"><span>Restaurant status</span><span class="tag">${db.settings.open ? "OPEN" : "CLOSED"}</span></div>`, button("Settings", "navigate", 'data-view="settings"', true))}</div>`,
       button("+ Take an order", "start-order"),
     );
   }
@@ -417,7 +426,7 @@
     return page(
       "A place for every guest.",
       "Available, busy or reserved — keep your dining room in sync.",
-      `<div class="legend"><span>● ${db.tables.filter((t) => t.status === "available").length} Available</span><span>● ${db.tables.filter((t) => t.status === "busy").length} Busy</span><span>● ${db.tables.filter((t) => t.status === "pending").length} Pending / reserved</span></div><div class="table-grid">${db.tables.map((t) => `<article class="table ${t.status}"><div class="table-top"><span class="table-symbol">▦</span><span class="status ${t.status}">${t.status === "pending" ? "Reserved" : t.status}</span></div><h2>Table ${t.n}</h2><p class="sub">${t.seats} seats · Main floor</p><div class="table-actions">${workspace === "manager" ? button("Manage", "table-edit", `data-id="${t.n}"`, true) : ""}${workspace !== "kitchen" ? button("Open table →", "table-open", `data-id="${t.n}"`, true) : ""}</div></article>`).join("") || empty("Add your first table to start service.")}</div>`,
+      `<div class="legend"><span>● ${db.tables.filter((t) => t.status === "available").length} Available</span><span>● ${db.tables.filter((t) => t.status === "busy").length} Busy</span><span>● ${db.tables.filter((t) => t.status === "pending").length} Pending / reserved</span></div><div class="table-grid">${db.tables.map((t) => `<article class="table ${t.status}"><div class="table-top"><span class="table-symbol">▦</span><span class="status ${t.status}">${t.status === "pending" ? "Reserved" : t.status}</span></div><h2>Table ${t.n}</h2><p class="sub">${t.seats} seats · Main floor</p><div class="table-actions">${workspace === "manager" ? button("Manage", "table-edit", `data-id="${t.n}"`, true) : ""}${button("Open table →", "table-open", `data-id="${t.n}"`, true)}</div></article>`).join("") || empty("Add your first table to start service.")}</div>`,
       workspace === "manager" ? button("+ Add table", "table-add") : "",
     );
   }
@@ -478,7 +487,7 @@
               paid.filter((p) => p.kind === "Advance"),
               "amount",
             );
-          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${total > s.salary ? "Overpaid / credit" : "Remaining"}</small><b>${money(Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}</div></article>`;
+          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.role === "kitchen" ? "Access removed" : s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${total > s.salary ? "Overpaid / credit" : "Remaining"}</small><b>${money(Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}</div></article>`;
         })
         .join(
           "",
@@ -509,7 +518,7 @@
             ["false", "Closed — suspend staff sessions"],
           ],
           String(db.settings.open),
-        )}<p class="sub">Closing signs out waiters and kitchen staff. Managers keep access and can reopen the restaurant. Existing paid bills retain their original tax.</p><div class="form-error" role="alert"></div><button class="button" type="submit">Save settings</button></form>`,
+        )}<p class="sub">Closing signs out waiters. Managers keep access and can reopen the restaurant. Existing paid bills retain their original tax.</p><div class="form-error" role="alert"></div><button class="button" type="submit">Save settings</button></form>`,
       ),
     );
   }
@@ -520,7 +529,7 @@
       `<section class="coming-soon"><div class="coming-icon">◎</div><span class="tag">COMING SOON</span><h2>Your next table could be anywhere.</h2><p>Online ordering is on its way. For now, keep every in-house order running smoothly from your workspace.</p>${button("Back to overview", "navigate", 'data-view="dashboard"')}</section>`,
     );
   }
-  function kitchen() {
+  function orders() {
     const statuses = workspace === "waiter" ? ["ready"] : ["new", "ready"];
     const awaiting = [
       ...new Set(
@@ -530,10 +539,10 @@
       ),
     ];
     return page(
-      workspace === "waiter" ? "Ready to serve" : "Kitchen orders",
+      workspace === "waiter" ? "Ready to serve" : "Orders",
       workspace === "waiter"
         ? "Food is ready. Deliver it to the table, then mark it served."
-        : "One clear queue. Mark each order ready when the food is finished.",
+        : "View incoming orders, mark them ready, then mark them served. Waiters are notified automatically.",
       '<div class="kitchen-orders simple-board">' +
         statuses
           .map((status) => {
@@ -550,7 +559,7 @@
               '<section class="kanban stage-' +
               status +
               '"><div class="stage-heading"><div><span class="eyebrow">' +
-              (status === "new" ? "01 · KITCHEN QUEUE" : "02 · PICKUP") +
+              (status === "new" ? "01 · NEW ORDERS" : "02 · PICKUP") +
               "</span><h2>" +
               (status === "new" ? "New orders" : "Ready to serve") +
               '</h2></div><span class="stage-count">' +
@@ -569,13 +578,13 @@
                             o.status +
                             '"',
                         )
-                      : workspace !== "kitchen"
+                      : workspace === "waiter"
                         ? button(
                             "✓ Mark served",
                             "advance",
                             'data-id="' + o.id + '" data-status="ready"',
                           )
-                        : '<div class="pickup-note">✓ Waiter notified · Awaiting pickup</div>';
+                        : '<div class="pickup-note">✓ Waiter notified · Awaiting service</div>';
                   return (
                     '<article class="korder ' +
                     status +
@@ -656,8 +665,8 @@
       .sort((a, b) => a.category.localeCompare(b.category) || a.rank - b.rank);
     return page(
       "Table " + activeTable,
-      "Add items and send a fresh ticket to the kitchen.",
-      `<div class="order-layout">${card("Food & drinks", `<label>Find an item<input type="search" name="menuSearch" placeholder="Search food or category"></label><div class="items">${items.map((i) => `<button class="item" data-action="cart-add" data-id="${i.id}" data-search="${esc((i.name + " " + i.category).toLowerCase())}"><span><b>${esc(i.name)}</b><small>${esc(i.category)} · ${money(i.price)}</small></span><span class="plus">+</span></button>`).join("")}</div>`)}${card("Current batch", cart.map((i) => `<div class="ticket-row"><div class="grow"><b>${esc(i.name)}</b><small>${money(i.price)}</small></div><div class="qty">${button("−", "cart-minus", `data-id="${i.id}"`, true)}<b>${i.qty}</b>${button("+", "cart-add", `data-id="${i.id}"`, true)}</div></div>`).join("") + `<div class="sale-row"><b>Batch subtotal</b><b>${money(cart.reduce((a, i) => a + i.price * i.qty, 0))}</b></div><div class="stack">${button("Send to kitchen →", "send-order")}${button("View full table bill", "bill", `data-id="${activeTable}"`, true)}</div>`)}</div>`,
+      "Add items and send the order to your manager.",
+      `<div class="order-layout">${card("Food & drinks", `<label>Find an item<input type="search" name="menuSearch" placeholder="Search food or category"></label><div class="items">${items.map((i) => `<button class="item" data-action="cart-add" data-id="${i.id}" data-search="${esc((i.name + " " + i.category).toLowerCase())}"><span><b>${esc(i.name)}</b><small>${esc(i.category)} · ${money(i.price)}</small></span><span class="plus">+</span></button>`).join("")}</div>`)}${card("Current batch", cart.map((i) => `<div class="ticket-row"><div class="grow"><b>${esc(i.name)}</b><small>${money(i.price)}</small></div><div class="qty">${button("−", "cart-minus", `data-id="${i.id}"`, true)}<b>${i.qty}</b>${button("+", "cart-add", `data-id="${i.id}"`, true)}</div></div>`).join("") + `<div class="sale-row"><b>Batch subtotal</b><b>${money(cart.reduce((a, i) => a + i.price * i.qty, 0))}</b></div><div class="stack">${button("Place order →", "send-order")}${button("View full table bill", "bill", `data-id="${activeTable}"`, true)}</div>`)}</div>`,
       button("Change table", "navigate", 'data-view="tables"', true),
     );
   }
@@ -713,7 +722,7 @@
     form(
       s.id ? "Manage staff account" : "Add staff account",
       "staff",
-      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${select("Role", "role", ["waiter", "kitchen", "manager"], s.role || "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
+      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${select("Role", "role", ["waiter", "manager"], s.role === "manager" ? "manager" : "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
         "Account status",
         "active",
         [
@@ -757,6 +766,11 @@
     const { action, id } = el.dataset;
     try {
       if (action === "enable-alerts") await enableOrderAlerts();
+      else if (action === "change-server") {
+        localStorage.removeItem("sajilo-server-url");
+        apiBase = "";
+        location.reload();
+      }
       else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
       else if (action === "navigate") navigate(el.dataset.view);
@@ -925,7 +939,19 @@
       errorBox = f.querySelector(".form-error");
     errorBox.textContent = "";
     try {
-      if (type === "login" || type === "setup") {
+    if (type === "server") {
+      try {
+        const url = new URL(String(p.server));
+        if (!/^https?:$/.test(url.protocol)) throw new Error("Use an http:// or https:// address.");
+        apiBase = url.origin;
+        await api("bootstrap");
+        localStorage.setItem("sajilo-server-url", apiBase);
+        location.reload();
+      } catch (error) {
+        apiBase = "";
+        errorBox.textContent = error.message === "Failed to fetch" ? "Could not reach this server. Check the Wi‑Fi address and make sure npm run dev:lan is running." : error.message;
+      }
+    } else if (type === "login" || type === "setup") {
         busy = true;
         f.querySelector('button[type="submit"]').disabled = true;
         try {
@@ -980,8 +1006,12 @@
   async function init() {
     try {
       if (!workspace) {
+        if (isAndroidApp && !apiBase) {
+          app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">RESTAURANT CONNECTION</span><h1>Connect your<br>restaurant.</h1><p>Enter the address of the computer running Sajilo on your restaurant Wi‑Fi.</p></section><section class="login-card"><span class="eyebrow">FIRST-TIME SETUP</span><h1>Where is your server?</h1><p class="sub">Example: <code>http://192.168.1.10:3000</code></p><form class="form-grid" data-form="server"><label>Restaurant server address<input name="server" type="url" inputmode="url" placeholder="http://192.168.1.10:3000" required></label><div class="form-error" role="alert"></div><button class="button" type="submit">Connect →</button></form><small>Your phone and restaurant computer must use the same Wi‑Fi.</small></section></main>`;
+          return;
+        }
         const { setup } = await api("bootstrap");
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and kitchen.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>${setup ? "Make yourself at home." : "Welcome back."}</h1><p class="sub">${setup ? "Create the first manager account on this computer." : "Sign in with your individual staff account."}</p><form class="form-grid" data-form="${setup ? "setup" : "login"}">${setup ? field("Your name", "name", "", "text", 'required autocomplete="name"') : ""}${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", `required ${setup ? 'minlength="12" autocomplete="new-password"' : 'autocomplete="current-password"'} maxlength="128"`)}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">${setup ? "Create manager account" : "Sign in to workspace"} →</button></form><small>${setup ? "Use a unique password of at least 12 characters." : "Need access or a password reset? Ask your manager."}</small></section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>${setup ? "Make yourself at home." : "Welcome back."}</h1><p class="sub">${setup ? "Create the first manager account on this computer." : "Sign in with your individual staff account."}</p><form class="form-grid" data-form="${setup ? "setup" : "login"}">${setup ? field("Your name", "name", "", "text", 'required autocomplete="name"') : ""}${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", `required ${setup ? 'minlength="12" autocomplete="new-password"' : 'autocomplete="current-password"'} maxlength="128"`)}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">${setup ? "Create manager account" : "Sign in to workspace"} →</button></form><small>${setup ? "Use a unique password of at least 12 characters." : "Need access or a password reset? Ask your manager."}${isAndroidApp ? '<br><button type="button" class="link-button" data-action="change-server">Change restaurant server</button>' : ''}</small></section></main>`;
         return;
       }
       db = await api("state");

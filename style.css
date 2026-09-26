@@ -733,6 +733,7 @@ select:focus {
 .form-error:empty {
   display: none;
 }
+.link-button { background: none; color: var(--green); padding: 7px 0 0; font-size: 11px; text-decoration: underline; }
 .coming-soon {
   background: white;
   border: 1px solid var(--line);

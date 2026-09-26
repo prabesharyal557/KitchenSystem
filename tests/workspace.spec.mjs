@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 
+test.describe.configure({ mode: "serial" });
+
 let server, dataDir;
 test.beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "sajilo-ui-"));
@@ -137,7 +139,7 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
     .getByRole("button", { name: "Open table" })
     .click();
   await waiter.getByRole("button", { name: "Buff Momo Momo" }).click();
-  await waiter.getByRole("button", { name: "Send to kitchen" }).click();
+  await waiter.getByRole("button", { name: "Place order" }).click();
   await expect(page.locator(".korder")).toContainText("Buff Momo", {
     timeout: 10000,
   });
@@ -146,8 +148,18 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
     path: testInfo.outputPath("kitchen-board.png"),
     fullPage: true,
   });
-  for (const name of ["Mark ready to serve →", "✓ Mark served"])
-    await page.getByRole("button", { name, exact: true }).click();
+  await page
+    .getByRole("button", { name: "Mark ready to serve →", exact: true })
+    .click();
+  await expect(
+    page.getByText("Waiter notified · Awaiting service"),
+  ).toBeVisible();
+  await waiter
+    .getByRole("button", { name: "Ready to serve", exact: true })
+    .click();
+  await waiter
+    .getByRole("button", { name: "✓ Mark served", exact: true })
+    .click();
   await page.getByRole("button", { name: "View bill", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Tax (13%)");
   await expect(page.getByRole("dialog")).toContainText("Rs. 226.00");
@@ -231,7 +243,7 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
   await waiterContext.close();
 });
 
-test("kitchen and waiter receive role-specific alerts without repeated notifications", async ({
+test("manager and waiter receive new, ready and served notifications", async ({
   browser,
 }) => {
   const managerContext = await browser.newContext();
@@ -251,10 +263,10 @@ test("kitchen and waiter receive role-specific alerts without repeated notificat
     return response.json();
   }
   let state = await action("staff.save", {
-    name: "Kitchen Cook",
+    name: "Service Manager",
     username: "cook",
-    password: "kitchen-ui-test-password",
-    role: "kitchen",
+    password: "service-ui-test-password",
+    role: "manager",
     active: true,
     salary: 30000,
   });
@@ -274,8 +286,11 @@ test("kitchen and waiter receive role-specific alerts without repeated notificat
   const kitchen = await staffPage(
     kitchenContext,
     "cook",
-    "kitchen-ui-test-password",
+    "service-ui-test-password",
   );
+  await kitchen
+    .getByRole("button", { name: "Active orders", exact: true })
+    .click();
   const waiter = await staffPage(
     waiterContext,
     "ram",
@@ -304,7 +319,7 @@ test("kitchen and waiter receive role-specific alerts without repeated notificat
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
   await kitchen.reload();
   await expect(
-    kitchen.getByRole("heading", { name: "Kitchen orders" }),
+    kitchen.getByRole("heading", { name: "Orders", exact: true }),
   ).toBeVisible();
   await kitchen.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(kitchen.locator(".order-alert")).toHaveCount(0);
@@ -329,6 +344,19 @@ test("kitchen and waiter receive role-specific alerts without repeated notificat
   await waiter.reload();
   await waiter.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
+  await action("order.advance", { id: order.id, status: "ready" });
+  await action("sale.pay", { table: 2, method: "Cash", expectedTotal: 452 });
+  await expect(waiter.locator(".order-alert")).toContainText(
+    "Order marked served",
+    { timeout: 10000 },
+  );
+  await waiter.getByRole("button", { name: "View order", exact: true }).click();
+  await expect(
+    waiter.getByRole("heading", { name: "Order history", level: 1 }),
+  ).toBeVisible();
+  await expect(
+    waiter.locator(".sale-row").filter({ hasText: order.id.slice(0, 6) }),
+  ).toContainText("Paid");
   state = await action("order.create", {
     table: 3,
     items: [{ id: item.id, qty: 1 }],
@@ -372,9 +400,12 @@ test("different users work simultaneously in the same browser without replacing 
   );
   const kitchen = await signIn(
     "cook",
-    "kitchen-ui-test-password",
-    "Kitchen orders",
+    "service-ui-test-password",
+    "Your restaurant, at a glance.",
   );
+  await kitchen
+    .getByRole("button", { name: "Active orders", exact: true })
+    .click();
   const secondWaiter = await signIn(
     "ram",
     "waiter-ui-test-password",
@@ -388,7 +419,7 @@ test("different users work simultaneously in the same browser without replacing 
   ]);
   await expect(manager.locator(".profile")).toContainText("Anisha Rai");
   await expect(waiter.locator(".profile")).toContainText("Ram Poudel");
-  await expect(kitchen.locator(".profile")).toContainText("Kitchen Cook");
+  await expect(kitchen.locator(".profile")).toContainText("Service Manager");
   async function prepareOrder(page, table) {
     await page
       .locator("article.table")
@@ -401,8 +432,8 @@ test("different users work simultaneously in the same browser without replacing 
   }
   await Promise.all([prepareOrder(waiter, 5), prepareOrder(secondWaiter, 6)]);
   await Promise.all([
-    waiter.getByRole("button", { name: "Send to kitchen" }).click(),
-    secondWaiter.getByRole("button", { name: "Send to kitchen" }).click(),
+    waiter.getByRole("button", { name: "Place order" }).click(),
+    secondWaiter.getByRole("button", { name: "Place order" }).click(),
   ]);
   await expect(
     kitchen.locator(".korder").filter({ hasText: "Table 5" }),
@@ -420,7 +451,7 @@ test("different users work simultaneously in the same browser without replacing 
     secondWaiter.reload(),
   ]);
   await expect(manager.locator(".profile")).toContainText("Anisha Rai");
-  await expect(kitchen.locator(".profile")).toContainText("Kitchen Cook");
+  await expect(kitchen.locator(".profile")).toContainText("Service Manager");
   await expect(secondWaiter.locator(".profile")).toContainText("Ram Poudel");
   await context.close();
 });
