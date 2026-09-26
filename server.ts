@@ -145,32 +145,53 @@ if (!db.prepare("SELECT id FROM state WHERE id=1").get())
 const initialManagerPassword = process.env.INITIAL_MANAGER_PASSWORD;
 if (initialManagerPassword) {
   const state = read();
-  if (state.staff.length === 0) {
-    const initialManagerUsername = (
-      process.env.INITIAL_MANAGER_USERNAME || "prabesh"
-    )
-      .trim()
-      .toLowerCase();
-    if (!/^[a-z0-9._-]+$/.test(initialManagerUsername))
-      throw new Error("INITIAL_MANAGER_USERNAME is invalid.");
-    if (initialManagerPassword.length < 8 || initialManagerPassword.length > 128)
-      throw new Error("INITIAL_MANAGER_PASSWORD must contain 8–128 characters.");
-    const initialManager: Staff = {
-      id: id(),
-      name: (process.env.INITIAL_MANAGER_NAME || "Prabesh").trim(),
-      username: initialManagerUsername,
-      role: "manager",
-      salary: 0,
-      active: true,
-      joined: now(),
-    };
+  const initialManagerUsername = (
+    process.env.INITIAL_MANAGER_USERNAME || "prabesh"
+  )
+    .trim()
+    .toLowerCase();
+  const initialManagerName = (process.env.INITIAL_MANAGER_NAME || "Prabesh").trim();
+  if (!/^[a-z0-9._-]+$/.test(initialManagerUsername))
+    throw new Error("INITIAL_MANAGER_USERNAME is invalid.");
+  if (initialManagerPassword.length < 8 || initialManagerPassword.length > 128)
+    throw new Error("INITIAL_MANAGER_PASSWORD must contain 8–128 characters.");
+  let initialManager = state.staff.find(
+    (staff) => staff.role === "manager" && staff.active,
+  );
+  const stored = initialManager
+    ? (db.prepare("SELECT hash FROM credentials WHERE id=?").get(
+        initialManager.id,
+      ) as { hash: string } | undefined)
+    : undefined;
+  const passwordChanged = !stored || !matches(initialManagerPassword, stored.hash);
+  const profileChanged =
+    !initialManager ||
+    initialManager.username !== initialManagerUsername ||
+    initialManager.name !== initialManagerName;
+  if (passwordChanged || profileChanged) {
+    if (!initialManager) {
+      initialManager = {
+        id: id(),
+        name: initialManagerName,
+        username: initialManagerUsername,
+        role: "manager",
+        salary: 0,
+        active: true,
+        joined: now(),
+      };
+      state.staff.push(initialManager);
+    } else {
+      initialManager.name = initialManagerName;
+      initialManager.username = initialManagerUsername;
+    }
     db.exec("BEGIN IMMEDIATE");
     try {
-      state.staff.push(initialManager);
-      db.prepare("INSERT INTO credentials VALUES (?, ?)").run(
-        initialManager.id,
-        hash(initialManagerPassword),
-      );
+      if (passwordChanged)
+        db.prepare("INSERT OR REPLACE INTO credentials VALUES (?, ?)").run(
+          initialManager.id,
+          hash(initialManagerPassword),
+        );
+      db.prepare("DELETE FROM sessions WHERE staffId=?").run(initialManager.id);
       save(state);
       db.exec("COMMIT");
     } catch (error) {
