@@ -142,6 +142,43 @@ if (!db.prepare("SELECT id FROM state WHERE id=1").get())
     staff: [],
     payments: [],
   });
+const initialManagerPassword = process.env.INITIAL_MANAGER_PASSWORD;
+if (initialManagerPassword) {
+  const state = read();
+  if (state.staff.length === 0) {
+    const initialManagerUsername = (
+      process.env.INITIAL_MANAGER_USERNAME || "prabesh"
+    )
+      .trim()
+      .toLowerCase();
+    if (!/^[a-z0-9._-]+$/.test(initialManagerUsername))
+      throw new Error("INITIAL_MANAGER_USERNAME is invalid.");
+    if (initialManagerPassword.length < 8 || initialManagerPassword.length > 128)
+      throw new Error("INITIAL_MANAGER_PASSWORD must contain 8–128 characters.");
+    const initialManager: Staff = {
+      id: id(),
+      name: (process.env.INITIAL_MANAGER_NAME || "Prabesh").trim(),
+      username: initialManagerUsername,
+      role: "manager",
+      salary: 0,
+      active: true,
+      joined: now(),
+    };
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      state.staff.push(initialManager);
+      db.prepare("INSERT INTO credentials VALUES (?, ?)").run(
+        initialManager.id,
+        hash(initialManagerPassword),
+      );
+      save(state);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
 class HttpError extends Error {
   status: number;
   constructor(status: number, message: string) {

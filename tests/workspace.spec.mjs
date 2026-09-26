@@ -11,21 +11,19 @@ let server, dataDir;
 test.beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "sajilo-ui-"));
   server = spawn(process.execPath, ["server.ts"], {
-    env: { ...process.env, PORT: "3138", DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      PORT: "3138",
+      DATA_DIR: dataDir,
+      INITIAL_MANAGER_NAME: "Anisha Rai",
+      INITIAL_MANAGER_USERNAME: "anisha",
+      INITIAL_MANAGER_PASSWORD: "manager-ui-test-password",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   for (let i = 0; i < 100; i++) {
     try {
       await fetch("http://127.0.0.1:3138/api/bootstrap");
-      await fetch("http://127.0.0.1:3138/api/setup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "Anisha Rai",
-          username: "anisha",
-          password: "manager-ui-test-password",
-        }),
-      });
       return;
     } catch {}
     await new Promise((r) => setTimeout(r, 50));

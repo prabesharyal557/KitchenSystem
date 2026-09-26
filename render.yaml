@@ -14,3 +14,9 @@ services:
         value: /tmp/sajilo-data
       - key: SECURE_COOKIE
         value: "1"
+      - key: INITIAL_MANAGER_NAME
+        value: Prabesh
+      - key: INITIAL_MANAGER_USERNAME
+        value: prabesh
+      - key: INITIAL_MANAGER_PASSWORD
+        sync: false

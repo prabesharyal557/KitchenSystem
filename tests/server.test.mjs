@@ -19,7 +19,14 @@ let child,
   saleId;
 async function start() {
   child = spawn(process.execPath, ["server.ts"], {
-    env: { ...process.env, PORT: "3137", DATA_DIR: dir },
+    env: {
+      ...process.env,
+      PORT: "3137",
+      DATA_DIR: dir,
+      INITIAL_MANAGER_NAME: "Test Manager",
+      INITIAL_MANAGER_USERNAME: "manager",
+      INITIAL_MANAGER_PASSWORD: "test-manager-password",
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let error = "";
@@ -69,8 +76,7 @@ after(async () => {
 test("login-only bootstrap, session cookies, unauthenticated access and static allowlist", async () => {
   assert.equal((await request("bootstrap")).data.setup, false);
   assert.equal((await request("state")).status, 401);
-  const r = await request("setup", {
-    name: "Test Manager",
+  const r = await request("login", {
     username: "manager",
     password: "test-manager-password",
   });
@@ -78,16 +84,7 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   managerCookie = r.cookie;
   assert.match(r.headers.get("set-cookie"), /HttpOnly/);
   assert.match(r.headers.get("set-cookie"), /SameSite=Strict/);
-  assert.equal(
-    (
-      await request("setup", {
-        name: "Other",
-        username: "other",
-        password: "another-password",
-      })
-    ).status,
-    409,
-  );
+  assert.equal((await request("bootstrap")).data.setup, false);
   assert.equal((await fetch(base + "/server.ts")).status, 404);
   assert.equal((await fetch(base + "/data/sajilo.sqlite")).status, 404);
   const state = (await request("state")).data;
