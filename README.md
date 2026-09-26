@@ -10,7 +10,7 @@ For development, run `npm run dev` to automatically restart the server when its 
 
 Multiple staff can sign in simultaneously on separate devices or in separate browser tabs. Open the sign-in page in a new tab for each person; each successful login receives an independent session. Refreshing a tab preserves its account, and signing out affects only that session. Duplicating an already signed-in tab initially shares that session until you sign in to another account in the new tab. Password resets, suspension and restaurant closure still revoke the affected staff sessions across all devices.
 
-Open http://127.0.0.1:3000 on the server computer and create the first manager account. There are no shared demo PINs. Initial manager setup is allowed only from localhost. Add waiter or additional manager accounts in **Staff & payroll**. Run integration checks with `npm test`.
+The production sign-in page is at <https://sajilo-restaurant.aryalprabesh300.workers.dev>. Add waiter or additional manager accounts in **Staff & payroll**. Run integration checks with `npm test`.
 
 For development checks, run `npm ci`, then `npm run typecheck` and `npm run test:ui`. The browser tests use an installed Chrome and an isolated temporary database; they do not add demo accounts or sales to your restaurant database.
 
@@ -31,7 +31,9 @@ For development checks, run `npm ci`, then `npm run typecheck` and `npm run test
 
 ## Architecture and data
 
-`server.ts` is a TypeScript HTTP backend running on Node's native type-stripping runtime. The browser remains standards-based JavaScript/CSS. SQLite stores shared restaurant state, password hashes and session tokens in `data/sajilo.sqlite`. No third-party runtime packages are required. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; sessions use random, hashed tokens and HttpOnly/SameSite cookies. The app escapes user text and enforces a restrictive Content Security Policy.
+Cloudflare Workers serves the production app and API, and Cloudflare D1 is its persistent database for restaurant state, password hashes and sessions. A Durable Object serializes updates from simultaneous staff devices while D1 remains the sole persistent data source. `server.ts` and local SQLite remain available for offline development. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; sessions use random, hashed tokens and HttpOnly cookies. The app escapes user text and enforces a restrictive Content Security Policy.
+
+Deploy production updates with `npm run cloudflare:deploy`. The Worker configuration and D1 binding are in `wrangler.jsonc`; schema changes belong in `migrations/`.
 
 The old browser-local demo is not imported automatically: it contained fabricated totals and undated records. Existing localStorage data is left untouched. Fresh server state has sample menu names/prices and twelve available tables, but **no invented orders, sales or payroll**. Set real ingredient costs before relying on profit reports.
 
@@ -41,9 +43,9 @@ To use several devices on the same trusted Wi-Fi/LAN, stop the existing server w
 
 ## Android APK
 
-Run `npm run android:debug` to create `android/app/build/outputs/apk/debug/app-debug.apk`. Install this APK, then enter the restaurant computer's LAN address, for example `http://192.168.1.10:3000`. Start the server first with `npm run dev:lan`; both devices must be on the same trusted Wi-Fi. The APK allows HTTP only for a local restaurant network. Use HTTPS before using it over the internet.
+Run `npm run android:debug` to create `android/app/build/outputs/apk/debug/app-debug.apk`. New APK installs connect to the Cloudflare production site automatically, so a restaurant computer does not need to remain running.
 
-After a website deployment, download the published APK from `/download/app-debug.apk` on the restaurant website.
+Download the published APK from <https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk>.
 
 The default server listens only on `127.0.0.1`. After local setup, a trusted-network deployment can set `HOST=0.0.0.0`; point every device at this one server. Use HTTPS via a reverse proxy and set `SECURE_COOKIE=1` for a hosted deployment. `PORT` defaults to 3000, and `DATA_DIR` can point to persistent storage. Do not run multiple processes against this application database; this version is designed for one restaurant/server process. Back up the database (stop the server before copying the data directory, or use SQLite's backup facility). This repository includes no hosting or automated backup setup.
 

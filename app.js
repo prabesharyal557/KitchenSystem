@@ -4,7 +4,13 @@
   const app = document.getElementById("app"),
     workspace = document.body.dataset.role;
   const isAndroidApp = Boolean(window.Capacitor?.isNativePlatform?.());
-  let apiBase = isAndroidApp ? (localStorage.getItem("sajilo-server-url") || "").replace(/\/$/, "") : "";
+  const cloudServer = "https://sajilo-restaurant.aryalprabesh300.workers.dev";
+  let apiBase = isAndroidApp
+    ? (localStorage.getItem("sajilo-server-url") || cloudServer).replace(
+        /\/$/,
+        "",
+      )
+    : "";
   // The tab stores only a selector; the authentication token remains HttpOnly.
   const newSessionScope = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
