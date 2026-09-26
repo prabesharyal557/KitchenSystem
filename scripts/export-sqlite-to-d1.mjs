@@ -14,7 +14,6 @@ const sessions = db
 
 const lines = [
   "-- Generated from the existing SQLite database. Do not commit this file.",
-  "BEGIN;",
   ...state.map((row) =>
     `INSERT INTO state (id, body) VALUES (${row.id}, ${quote(row.body)}) ` +
       "ON CONFLICT(id) DO UPDATE SET body=excluded.body;",
@@ -28,7 +27,6 @@ const lines = [
       `INSERT INTO sessions (token, staffId, expires) VALUES (${quote(row.token)}, ${quote(row.staffId)}, ${row.expires}) ` +
       "ON CONFLICT(token) DO UPDATE SET staffId=excluded.staffId, expires=excluded.expires;",
   ),
-  "COMMIT;",
   "",
 ];
 
