@@ -10,7 +10,7 @@ import {
   timingSafeEqual,
   createHash,
 } from "node:crypto";
-import { readFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
 
@@ -687,6 +687,17 @@ createServer(async (req, res) => {
     if (path === "/health") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
       output(res, 200, { ok: true });
+      return;
+    }
+    if (path === "/download/app-debug.apk") {
+      requireThat(req.method === "GET", "Method not allowed.", 405);
+      const apk = join(root, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
+      requireThat(existsSync(apk), "APK has not been built yet.", 404);
+      res.writeHead(200, {
+        "Content-Type": "application/vnd.android.package-archive",
+        "Content-Disposition": 'attachment; filename="Sajilo-Restaurant.apk"',
+      });
+      res.end(readFileSync(apk));
       return;
     }
     requireThat(req.method === "GET", "Method not allowed.", 405);
