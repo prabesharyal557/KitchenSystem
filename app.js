@@ -228,7 +228,7 @@
   }
   async function api(path, payload) {
     // A fresh login gets a new slot even when this tab was duplicated from another tab.
-    const signingIn = path === "login" || path === "setup";
+    const signingIn = path === "login";
     const scope = signingIn ? newSessionScope() : sessionScope;
     const response = await fetch(
       apiBase + "/api/" + path,
@@ -951,7 +951,7 @@
         apiBase = "";
         errorBox.textContent = error.message === "Failed to fetch" ? "Could not reach this server. Check the Wi‑Fi address and make sure npm run dev:lan is running." : error.message;
       }
-    } else if (type === "login" || type === "setup") {
+    } else if (type === "login") {
         busy = true;
         f.querySelector('button[type="submit"]').disabled = true;
         try {
@@ -1010,8 +1010,8 @@
           app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">RESTAURANT CONNECTION</span><h1>Connect your<br>restaurant.</h1><p>Enter the address of the computer running Sajilo on your restaurant Wi‑Fi.</p></section><section class="login-card"><span class="eyebrow">FIRST-TIME SETUP</span><h1>Where is your server?</h1><p class="sub">Example: <code>http://192.168.1.10:3000</code></p><form class="form-grid" data-form="server"><label>Restaurant server address<input name="server" type="url" inputmode="url" placeholder="http://192.168.1.10:3000" required></label><div class="form-error" role="alert"></div><button class="button" type="submit">Connect →</button></form><small>Your phone and restaurant computer must use the same Wi‑Fi.</small></section></main>`;
           return;
         }
-        const { setup } = await api("bootstrap");
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>${setup ? "Make yourself at home." : "Welcome back."}</h1><p class="sub">${setup ? "Create the first manager account on this computer." : "Sign in with your individual staff account."}</p><form class="form-grid" data-form="${setup ? "setup" : "login"}">${setup ? field("Your name", "name", "", "text", 'required autocomplete="name"') : ""}${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", `required ${setup ? 'minlength="12" autocomplete="new-password"' : 'autocomplete="current-password"'} maxlength="128"`)}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">${setup ? "Create manager account" : "Sign in to workspace"} →</button></form><small>${setup ? "Use a unique password of at least 12 characters." : "Need access or a password reset? Ask your manager."}${isAndroidApp ? '<br><button type="button" class="link-button" data-action="change-server">Change restaurant server</button>' : ''}</small></section></main>`;
+        await api("bootstrap");
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.${isAndroidApp ? '<br><button type="button" class="link-button" data-action="change-server">Change restaurant server</button>' : ''}</small></section></main>`;
         return;
       }
       db = await api("state");

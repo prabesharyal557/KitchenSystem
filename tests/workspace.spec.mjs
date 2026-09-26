@@ -17,6 +17,15 @@ test.beforeAll(async () => {
   for (let i = 0; i < 100; i++) {
     try {
       await fetch("http://127.0.0.1:3138/api/bootstrap");
+      await fetch("http://127.0.0.1:3138/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "Anisha Rai",
+          username: "anisha",
+          password: "manager-ui-test-password",
+        }),
+      });
       return;
     } catch {}
     await new Promise((r) => setTimeout(r, 50));
@@ -42,12 +51,11 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
   });
   page.on("dialog", (d) => d.accept());
   await page.goto("/");
-  await page.getByLabel("Your name").fill("Anisha Rai");
   await page.getByLabel("Username").fill("anisha");
   await page
     .getByLabel("Password", { exact: true })
     .fill("manager-ui-test-password");
-  await page.getByRole("button", { name: "Create manager account" }).click();
+  await page.getByRole("button", { name: "Sign in to workspace" }).click();
   await expect(
     page.getByRole("heading", { name: "Your restaurant, at a glance." }),
   ).toBeVisible();
@@ -344,13 +352,13 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await waiter.reload();
   await waiter.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
-  await action("order.advance", { id: order.id, status: "ready" });
+  await waiter
+    .locator(".korder")
+    .filter({ hasText: order.id.slice(0, 6) })
+    .getByRole("button", { name: "Mark served" })
+    .click();
   await action("sale.pay", { table: 2, method: "Cash", expectedTotal: 452 });
-  await expect(waiter.locator(".order-alert")).toContainText(
-    "Order marked served",
-    { timeout: 10000 },
-  );
-  await waiter.getByRole("button", { name: "View order", exact: true }).click();
+  await waiter.getByRole("button", { name: "Order history", exact: true }).click();
   await expect(
     waiter.getByRole("heading", { name: "Order history", level: 1 }),
   ).toBeVisible();

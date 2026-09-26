@@ -579,7 +579,7 @@ createServer(async (req, res) => {
           );
       }
       if (path === "/api/bootstrap" && req.method === "GET") {
-        output(res, 200, { setup: read().staff.length === 0 });
+        output(res, 200, { setup: false });
         return;
       }
       const p = req.method === "POST" ? await body(req) : {};

@@ -66,8 +66,8 @@ after(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("first-run setup, session cookies, unauthenticated access and static allowlist", async () => {
-  assert.equal((await request("bootstrap")).data.setup, true);
+test("login-only bootstrap, session cookies, unauthenticated access and static allowlist", async () => {
+  assert.equal((await request("bootstrap")).data.setup, false);
   assert.equal((await request("state")).status, 401);
   const r = await request("setup", {
     name: "Test Manager",
