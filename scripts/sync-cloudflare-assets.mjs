@@ -6,7 +6,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(root, "cloudflare-public");
 await rm(output, { recursive: true, force: true });
 await mkdir(join(output, "download"), { recursive: true });
-for (const file of ["index.html", "manager.html", "waiter.html", "app.js", "style.css", "auth.css", "favicon.svg"]) {
+for (const file of ["index.html", "manager.html", "waiter.html", "kitchen.html", "app.js", "style.css", "auth.css", "favicon.svg"]) {
   await cp(join(root, file), join(output, file));
 }
 await cp(join(root, "downloads", "Sajilo-Restaurant.apk"), join(output, "download", "app-debug.apk"));

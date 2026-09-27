@@ -20,8 +20,8 @@ For development checks, run `npm ci`, then `npm run typecheck` and `npm run test
 - Clickable overview metrics; sales and completed-bill reports for day, Monday–Sunday week, month and year, with a date picker. Dates use Nepal time.
 - Actual paid sales, tax, net sales, estimated gross profit, average bill and best sellers. Gross profit subtracts recorded ingredient costs, not payroll, rent or other operating expenses.
 - Shared tables and order progression, refreshed every four seconds. Available, busy and pending/reserved table states. Unpaid tables cannot be deleted or freed.
-- Managers handle orders in **New orders** and **Ready to serve**. Managers mark food ready; waiters alone mark ready orders served. Waiters receive notifications for ready-to-serve and served orders. Legacy preparing tickets remain visible under New orders.
-- Managers receive new-order alerts; waiters receive ready-to-serve and served alerts with table numbers and items. In-app alerts work while typing. Use **Enable sound & desktop alerts** for sound and browser notifications. Keep the app open; desktop alerts require browser permission/support. Repeated polling and reloads do not duplicate alerts in the same tab.
+- Kitchen staff see active kitchen tickets and can only mark new orders ready. Managers can also mark food ready; waiters alone mark ready orders served. Waiters receive notifications for ready-to-serve and served orders. Legacy preparing tickets remain visible under New orders.
+- Managers and kitchen staff receive new-order alerts; waiters receive ready-to-serve and served alerts with table numbers and items. In-app alerts work while typing. Use **Enable sound & desktop alerts** for sound and browser notifications. Keep the app open; desktop alerts require browser permission/support. Repeated polling and reloads do not duplicate alerts in the same tab.
 - Menu CRUD, categories, availability and custom/name/price sorting. Order lines retain their price and cost when the menu changes.
 - Individual staff accounts, role permissions, suspension and password resets; salary and advance payment ledger by salary month. Remaining balance uses the current monthly salary. Payments are immutable in this version.
 - Manager-controlled closure revokes waiter sessions. Reopening allows active accounts to sign in again.
@@ -49,7 +49,7 @@ Download the published APK from <https://sajilo-restaurant.aryalprabesh300.worke
 
 The default server listens only on `127.0.0.1`. After local setup, a trusted-network deployment can set `HOST=0.0.0.0`; point every device at this one server. Use HTTPS via a reverse proxy and set `SECURE_COOKIE=1` for a hosted deployment. `PORT` defaults to 3000, and `DATA_DIR` can point to persistent storage. Do not run multiple processes against this application database; this version is designed for one restaurant/server process. Back up the database (stop the server before copying the data directory, or use SQLite's backup facility). This repository includes no hosting or automated backup setup.
 
-The separate kitchen workspace and new kitchen accounts have been removed. Existing kitchen staff records and payroll remain available to managers, but kitchen-role sign-in and old kitchen sessions are blocked. A manager can reassign a former kitchen account to an available role.
+Managers can create kitchen accounts in **Staff & payroll**. Kitchen accounts only receive the active order list and cannot access tables, menu management, payments, sales, payroll or settings.
 
 ## Free hosted trial
 

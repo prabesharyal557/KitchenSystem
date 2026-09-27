@@ -274,10 +274,10 @@ test("manager and waiter receive new, ready and served notifications", async ({
     return response.json();
   }
   let state = await action("staff.save", {
-    name: "Service Manager",
+    name: "Kitchen Team",
     username: "cook",
     password: "service-ui-test-password",
-    role: "manager",
+    role: "kitchen",
     active: true,
     salary: 30000,
   });
@@ -300,7 +300,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
     "service-ui-test-password",
   );
   await kitchen
-    .getByRole("button", { name: "Active orders", exact: true })
+    .getByRole("button", { name: "Kitchen orders", exact: true })
     .click();
   const waiter = await staffPage(
     waiterContext,
@@ -330,11 +330,15 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
   await kitchen.reload();
   await expect(
-    kitchen.getByRole("heading", { name: "Orders", exact: true }),
+    kitchen.getByRole("heading", { name: "Kitchen orders", exact: true }),
   ).toBeVisible();
   await kitchen.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(kitchen.locator(".order-alert")).toHaveCount(0);
-  await action("order.advance", { id: order.id, status: "new" });
+  await kitchen
+    .locator(".korder")
+    .filter({ hasText: order.id.slice(0, 6) })
+    .getByRole("button", { name: "Mark ready to serve" })
+    .click();
   await expect(waiter.locator(".order-alert")).toContainText(
     "Order ready to serve",
     { timeout: 10000 },
@@ -412,10 +416,10 @@ test("different users work simultaneously in the same browser without replacing 
   const kitchen = await signIn(
     "cook",
     "service-ui-test-password",
-    "Your restaurant, at a glance.",
+    "Kitchen orders",
   );
   await kitchen
-    .getByRole("button", { name: "Active orders", exact: true })
+    .getByRole("button", { name: "Kitchen orders", exact: true })
     .click();
   const secondWaiter = await signIn(
     "ram",
@@ -430,7 +434,7 @@ test("different users work simultaneously in the same browser without replacing 
   ]);
   await expect(manager.locator(".profile")).toContainText("Anisha Rai");
   await expect(waiter.locator(".profile")).toContainText("Ram Poudel");
-  await expect(kitchen.locator(".profile")).toContainText("Service Manager");
+  await expect(kitchen.locator(".profile")).toContainText("Kitchen Team");
   async function prepareOrder(page, table) {
     await page
       .locator("article.table")
@@ -462,7 +466,7 @@ test("different users work simultaneously in the same browser without replacing 
     secondWaiter.reload(),
   ]);
   await expect(manager.locator(".profile")).toContainText("Anisha Rai");
-  await expect(kitchen.locator(".profile")).toContainText("Service Manager");
+  await expect(kitchen.locator(".profile")).toContainText("Kitchen Team");
   await expect(secondWaiter.locator(".profile")).toContainText("Ram Poudel");
   await context.close();
 });

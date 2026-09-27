@@ -94,6 +94,21 @@ function json(value: unknown, status = 200, headers?: HeadersInit) {
 }
 function snapshot(state: State, user: Staff) {
   if (user.role === "manager") return { ...state, user };
+  if (user.role === "kitchen")
+    return {
+      settings: state.settings,
+      orders: state.orders
+        .filter(
+          (order) =>
+            !order.paid &&
+            ["new", "preparing", "ready"].includes(order.status),
+        )
+        .map((order) => ({
+          ...order,
+          items: order.items.map(({ cost, price, ...item }) => item),
+        })),
+      user,
+    };
   return {
     settings: state.settings,
     tables: state.tables,
@@ -125,7 +140,7 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
     return;
   }
   if (action === "order.advance") {
-    requireThat((user.role === "manager" && payload.status !== "ready") || (user.role === "waiter" && payload.status === "ready"), "Only managers can mark orders ready. Only waiters can mark ready orders served.", 403);
+    requireThat((["manager", "kitchen"].includes(user.role) && payload.status !== "ready") || (user.role === "waiter" && payload.status === "ready"), "Only managers or kitchen staff can mark orders ready. Only waiters can mark ready orders served.", 403);
     const order = state.orders.find((entry) => entry.id === payload.id && !entry.paid);
     requireThat(order && ["new", "preparing", "ready"].includes(order.status), "Order cannot be advanced.");
     requireThat(order.status === payload.status, "Order already updated. Refresh and try again.", 409);
@@ -179,7 +194,7 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
     requireThat(!payload.id || existing, "Staff member not found.");
     const login = username(payload.username);
     requireThat(!state.staff.some((staff) => staff.username === login && staff.id !== payload.id), "Username is already taken.");
-    requireThat(["manager", "waiter"].includes(payload.role), "Invalid role.");
+    requireThat(["manager", "waiter", "kitchen"].includes(payload.role), "Invalid role.");
     const active = bool(payload.active);
     requireThat(payload.id !== user.id || (active && payload.role === "manager"), "You cannot suspend or demote your own account.");
     const member: Staff = { id: existing?.id || id(), name: text(payload.name, "Name"), username: login, role: payload.role, salary: num(payload.salary, "Monthly salary"), active, joined: existing?.joined || now() };
@@ -223,7 +238,6 @@ export class RestaurantCoordinator extends DurableObject<Env> {
     const session = await this.env.DB.prepare("SELECT staffId FROM sessions WHERE token = ? AND expires > ?").bind(token, Date.now()).first<{ staffId: string }>();
     const user = state.staff.find((staff) => staff.id === session?.staffId && staff.active);
     requireThat(user, "Please sign in.", 401);
-    requireThat(user.role !== "kitchen", "The kitchen workspace has been removed. Ask your manager to update your role.", 403);
     requireThat(state.settings.open || user.role === "manager", "Restaurant is closed. Staff access is suspended until a manager opens it.", 403);
     return user;
   }
@@ -263,7 +277,6 @@ export class RestaurantCoordinator extends DurableObject<Env> {
         const valid = matches(pass, credential?.hash || makeHash("invalid-login-placeholder"));
         requireThat(user && valid, "Invalid username or password.", 401);
         requireThat(user.active, "Your account has been suspended.", 403);
-        requireThat(user.role !== "kitchen", "The kitchen workspace has been removed. Ask your manager to update your role.", 403);
         requireThat(state.settings.open || user.role === "manager", "Restaurant is closed. Please ask your manager to reopen it.", 403);
         const setCookie = await this.createSession(request, user);
         this.attempts.delete(limitKey);

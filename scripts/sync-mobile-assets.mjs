@@ -7,6 +7,7 @@ for (const file of [
   "index.html",
   "manager.html",
   "waiter.html",
+  "kitchen.html",
   "app.js",
   "style.css",
   "auth.css",

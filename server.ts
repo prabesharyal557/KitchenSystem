@@ -267,11 +267,6 @@ function account(req: IncomingMessage, state: State) {
   const u = state.staff.find((u) => u.id === s?.staffId && u.active);
   requireThat(u, "Please sign in.", 401);
   requireThat(
-    u!.role !== "kitchen",
-    "The kitchen workspace has been removed. Ask your manager to update your role.",
-    403,
-  );
-  requireThat(
     state.settings.open || u!.role === "manager",
     "Restaurant is closed. Staff access is suspended until a manager opens it.",
     403,
@@ -333,6 +328,19 @@ function output(res: ServerResponse, code: number, value: unknown) {
 }
 function snapshot(state: State, user: Staff) {
   if (user.role === "manager") return { ...state, user };
+  if (user.role === "kitchen")
+    return {
+      settings: state.settings,
+      orders: state.orders
+        .filter(
+          (o) => !o.paid && ["new", "preparing", "ready"].includes(o.status),
+        )
+        .map((o) => ({
+          ...o,
+          items: o.items.map(({ cost, price, ...i }) => i),
+        })),
+      user,
+    };
   return {
     settings: state.settings,
     tables: state.tables,
@@ -388,9 +396,9 @@ function mutate(state: State, u: Staff, action: string, p: any) {
   }
   if (action === "order.advance") {
     requireThat(
-      (u.role === "manager" && p.status !== "ready") ||
+      (["manager", "kitchen"].includes(u.role) && p.status !== "ready") ||
         (u.role === "waiter" && p.status === "ready"),
-      "Only managers can mark orders ready. Only waiters can mark ready orders served.",
+      "Only managers or kitchen staff can mark orders ready. Only waiters can mark ready orders served.",
       403,
     );
     const o = state.orders.find((o) => o.id === p.id && !o.paid);
@@ -516,7 +524,10 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       !state.staff.some((s) => s.username === name && s.id !== p.id),
       "Username is already taken.",
     );
-    requireThat(["manager", "waiter"].includes(p.role), "Invalid role.");
+    requireThat(
+      ["manager", "waiter", "kitchen"].includes(p.role),
+      "Invalid role.",
+    );
     const active = boolean(p.active);
     requireThat(
       p.id !== u.id || (active && p.role === "manager"),
@@ -594,6 +605,7 @@ const assets: Record<string, string> = {
   "/index.html": "index.html",
   "/manager.html": "manager.html",
   "/waiter.html": "waiter.html",
+  "/kitchen.html": "kitchen.html",
   "/app.js": "app.js",
   "/style.css": "style.css",
   "/auth.css": "auth.css",
@@ -713,11 +725,6 @@ createServer(async (req, res) => {
         const valid = matches(pass, credential?.hash || dummyHash);
         requireThat(u && valid, "Invalid username or password.", 401);
         requireThat(u!.active, "Your account has been suspended.", 403);
-        requireThat(
-          u!.role !== "kitchen",
-          "The kitchen workspace has been removed. Ask your manager to update your role.",
-          403,
-        );
         requireThat(
           s.settings.open || u!.role === "manager",
           "Restaurant is closed. Please ask your manager to reopen it.",

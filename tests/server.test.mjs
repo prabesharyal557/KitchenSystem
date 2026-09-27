@@ -122,53 +122,27 @@ test("staff accounts, hashing, role boundaries and private payroll", async () =>
   });
   assert.equal(r.status, 200);
   staffId = r.data.staff.find((s) => s.username === "waiter").id;
-  assert.equal(
-    (
-      await action("staff.save", {
-        name: "Removed",
-        username: "kitchen",
-        password: "kitchen-test-password",
-        role: "kitchen",
-        salary: 30000,
-        active: true,
-      })
-    ).status,
-    400,
-  );
   await action("staff.save", {
-    name: "Legacy staff",
-    username: "legacy",
-    password: "legacy-test-password",
-    role: "waiter",
+    name: "Kitchen Test",
+    username: "kitchen",
+    password: "kitchen-test-password",
+    role: "kitchen",
     salary: 30000,
     active: true,
   });
   kitchenCookie = (
     await request("login", {
-      username: "legacy",
-      password: "legacy-test-password",
+      username: "kitchen",
+      password: "kitchen-test-password",
     })
   ).cookie;
-  const legacyDb = new DatabaseSync(join(dir, "sajilo.sqlite"));
-  const legacyState = JSON.parse(
-    legacyDb.prepare("SELECT body FROM state WHERE id=1").get().body,
-  );
-  legacyState.staff.find((s) => s.username === "legacy").role = "kitchen";
-  legacyDb
-    .prepare("UPDATE state SET body=? WHERE id=1")
-    .run(JSON.stringify(legacyState));
-  legacyDb.close();
-  assert.equal((await request("state", undefined, kitchenCookie)).status, 403);
-  assert.equal(
-    (
-      await request("login", {
-        username: "legacy",
-        password: "legacy-test-password",
-      })
-    ).status,
-    403,
-  );
-  assert.equal((await fetch(base + "/kitchen.html")).status, 404);
+  const kitchenState = await request("state", undefined, kitchenCookie);
+  assert.equal(kitchenState.status, 200);
+  assert.equal(kitchenState.data.tables, undefined);
+  assert.equal(kitchenState.data.menu, undefined);
+  assert.equal(kitchenState.data.sales, undefined);
+  assert.equal(kitchenState.data.payments, undefined);
+  assert.equal((await fetch(base + "/kitchen.html")).status, 200);
   waiterCookie = (
     await request("login", {
       username: "waiter",
@@ -274,7 +248,7 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
       await action(
         "order.advance",
         { id: orderId, status: "new" },
-        managerCookie,
+        kitchenCookie,
       )
     ).status,
     200,
@@ -299,6 +273,16 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
         "order.advance",
         { id: orderId, status: "ready" },
         managerCookie,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await action(
+        "order.advance",
+        { id: orderId, status: "ready" },
+        kitchenCookie,
       )
     ).status,
     403,

@@ -53,7 +53,11 @@
   let db,
     view =
       location.hash.slice(1) ||
-      (workspace === "manager" ? "dashboard" : "tables");
+      (workspace === "manager"
+        ? "dashboard"
+        : workspace === "kitchen"
+          ? "orders"
+          : "tables");
   let period = "day",
     reportDate = today(),
     staffMonth = month(),
@@ -71,7 +75,7 @@
     latestAlertState;
   const orderAlerts = new Map();
   function initOrderAlerts() {
-    if (!["waiter", "manager"].includes(workspace)) return;
+    if (!["waiter", "manager", "kitchen"].includes(workspace)) return;
     alertStorageKey = `sajilo-alerts:${db.user.id}:${workspace}`;
     try {
       seenAlerts = new Set(
@@ -150,7 +154,7 @@
       }
     }
     const relevant = state.orders.filter((o) =>
-      workspace === "manager"
+      ["manager", "kitchen"].includes(workspace)
         ? !o.paid && o.status === "new"
         : (!o.paid && o.status === "ready") ||
           (o.status === "served" &&
@@ -173,7 +177,7 @@
       seenAlerts.add(key);
       added = true;
       const title =
-        workspace === "manager"
+        ["manager", "kitchen"].includes(workspace)
           ? "New order received"
           : order.status === "served"
             ? "Order marked served"
@@ -290,7 +294,7 @@
     return `<div class="empty"><span>◇</span><p>${message}</p></div>`;
   }
   function page(title, subtitle, content, actions = "") {
-    return `<main class="content"><section class="hero"><div><div class="eyebrow">${workspace === "manager" ? "RESTAURANT MANAGEMENT" : "SERVICE WORKSPACE"}</div><h1>${title}</h1><p class="sub">${subtitle}</p></div><div class="actions">${actions}</div></section>${content}</main>`;
+    return `<main class="content"><section class="hero"><div><div class="eyebrow">${workspace === "manager" ? "RESTAURANT MANAGEMENT" : workspace === "kitchen" ? "KITCHEN WORKSPACE" : "SERVICE WORKSPACE"}</div><h1>${title}</h1><p class="sub">${subtitle}</p></div><div class="actions">${actions}</div></section>${content}</main>`;
   }
   function card(title, content, aside = "") {
     return `<section class="card"><div class="card-head"><h2>${title}</h2>${aside}</div><div class="card-body">${content}</div></section>`;
@@ -308,13 +312,15 @@
             ["sales", "↗", "Sales reports"],
             ["settings", "⚙", "Settings"],
           ]
-        : [
+        : workspace === "kitchen"
+          ? [["orders", "♨", "Kitchen orders"]]
+          : [
             ["tables", "▦", "Tables"],
             ["order", "+", "Take order"],
             ["orders", "✓", "Ready to serve"],
             ["history", "◷", "Order history"],
           ];
-    return `<aside class="sidebar"><a class="brand" href="#${workspace === "manager" ? "dashboard" : "tables"}">sajilo<span>●</span></a><div class="rest"><div class="restaurant-icon">H</div><div><b>${esc(db.settings.name)}</b><small>${esc(workspace)} workspace</small></div></div><div class="nav-label">WORKSPACE</div><nav>${links.map(([v, icon, label]) => `<button data-action="navigate" data-view="${v}" class="${view === v || (view === "completed" && v === "sales") ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""} title="${label}" aria-label="${label}"><i>${icon}</i><span>${label}</span>${v === "online" ? "<small>SOON</small>" : ""}</button>`).join("")}</nav><div class="side-foot"><div class="open-state ${db.settings.open ? "" : "closed"}">● Restaurant ${db.settings.open ? "open" : "closed"}</div><div class="profile"><div class="avatar">${esc(db.user.name.charAt(0))}</div><div><b>${esc(db.user.name)}</b><small>${esc(db.user.role)}</small></div></div>${button("↪ Sign out", "logout", "", true)}</div></aside>`;
+    return `<aside class="sidebar"><a class="brand" href="#${workspace === "manager" ? "dashboard" : workspace === "kitchen" ? "orders" : "tables"}">sajilo<span>●</span></a><div class="rest"><div class="restaurant-icon">H</div><div><b>${esc(db.settings.name)}</b><small>${esc(workspace)} workspace</small></div></div><div class="nav-label">WORKSPACE</div><nav>${links.map(([v, icon, label]) => `<button data-action="navigate" data-view="${v}" class="${view === v || (view === "completed" && v === "sales") ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""} title="${label}" aria-label="${label}"><i>${icon}</i><span>${label}</span>${v === "online" ? "<small>SOON</small>" : ""}</button>`).join("")}</nav><div class="side-foot"><div class="open-state ${db.settings.open ? "" : "closed"}">● Restaurant ${db.settings.open ? "open" : "closed"}</div><div class="profile"><div class="avatar">${esc(db.user.name.charAt(0))}</div><div><b>${esc(db.user.name)}</b><small>${esc(db.user.role)}</small></div></div>${button("↪ Sign out", "logout", "", true)}</div></aside>`;
   }
   function render() {
     if (!db) return;
@@ -334,8 +340,16 @@
             order,
             history,
           }
-        : { tables, order, history, orders };
-    if (!pages[view]) view = workspace === "manager" ? "dashboard" : "tables";
+        : workspace === "kitchen"
+          ? { orders }
+          : { tables, order, history, orders };
+    if (!pages[view])
+      view =
+        workspace === "manager"
+          ? "dashboard"
+          : workspace === "kitchen"
+            ? "orders"
+            : "tables";
     app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online ? "" : "offline"}">● ${online ? "Live · syncs every 4s" : "Connection lost · retrying"}</span><time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
   }
   function salesFor(date) {
@@ -385,7 +399,7 @@
           )
           .join("") || empty("No active orders. Ready for the next guest."),
         button("View orders →", "navigate", 'data-view="orders"', true),
-      )}${card("Team & operations", `<div class="sale-row"><span>Active staff accounts</span><b>${db.staff.filter((s) => s.active && s.role !== "kitchen").length}</b></div><div class="sale-row"><span>Tax on new bills</span><b>${db.settings.taxRate}%</b></div><div class="sale-row"><span>Restaurant status</span><span class="tag">${db.settings.open ? "OPEN" : "CLOSED"}</span></div>`, button("Settings", "navigate", 'data-view="settings"', true))}</div>`,
+      )}${card("Team & operations", `<div class="sale-row"><span>Active staff accounts</span><b>${db.staff.filter((s) => s.active).length}</b></div><div class="sale-row"><span>Tax on new bills</span><b>${db.settings.taxRate}%</b></div><div class="sale-row"><span>Restaurant status</span><span class="tag">${db.settings.open ? "OPEN" : "CLOSED"}</span></div>`, button("Settings", "navigate", 'data-view="settings"', true))}</div>`,
       button("+ Take an order", "start-order"),
     );
   }
@@ -489,7 +503,7 @@
               paid.filter((p) => p.kind === "Advance"),
               "amount",
             );
-          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.role === "kitchen" ? "Access removed" : s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${total > s.salary ? "Overpaid / credit" : "Remaining"}</small><b>${money(Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}</div></article>`;
+          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${total > s.salary ? "Overpaid / credit" : "Remaining"}</small><b>${money(Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}</div></article>`;
         })
         .join(
           "",
@@ -541,10 +555,16 @@
       ),
     ];
     return page(
-      workspace === "waiter" ? "Ready to serve" : "Orders",
+      workspace === "waiter"
+        ? "Ready to serve"
+        : workspace === "kitchen"
+          ? "Kitchen orders"
+          : "Orders",
       workspace === "waiter"
         ? "Food is ready. Deliver it to the table, then mark it served."
-        : "View incoming orders, mark them ready, then mark them served. Waiters are notified automatically.",
+        : workspace === "kitchen"
+          ? "Prepare incoming orders and mark them ready. The waiter will be notified automatically."
+          : "View incoming orders and mark them ready. Waiters mark delivered orders served.",
       '<div class="kitchen-orders simple-board">' +
         statuses
           .map((status) => {
@@ -667,7 +687,7 @@
       .sort((a, b) => a.category.localeCompare(b.category) || a.rank - b.rank);
     return page(
       "Table " + activeTable,
-      "Add items and send the order to your manager.",
+      "Add items and send the order to the kitchen.",
       `<div class="order-layout">${card("Food & drinks", `<label>Find an item<input type="search" name="menuSearch" placeholder="Search food or category"></label><div class="items">${items.map((i) => `<button class="item" data-action="cart-add" data-id="${i.id}" data-search="${esc((i.name + " " + i.category).toLowerCase())}"><span><b>${esc(i.name)}</b><small>${esc(i.category)} · ${money(i.price)}</small></span><span class="plus">+</span></button>`).join("")}</div>`)}${card("Current batch", cart.map((i) => `<div class="ticket-row"><div class="grow"><b>${esc(i.name)}</b><small>${money(i.price)}</small></div><div class="qty">${button("−", "cart-minus", `data-id="${i.id}"`, true)}<b>${i.qty}</b>${button("+", "cart-add", `data-id="${i.id}"`, true)}</div></div>`).join("") + `<div class="sale-row"><b>Batch subtotal</b><b>${money(cart.reduce((a, i) => a + i.price * i.qty, 0))}</b></div><div class="stack">${button("Place order →", "send-order")}${button("View full table bill", "bill", `data-id="${activeTable}"`, true)}</div>`)}</div>`,
       button("Change table", "navigate", 'data-view="tables"', true),
     );
@@ -724,7 +744,7 @@
     form(
       s.id ? "Manage staff account" : "Add staff account",
       "staff",
-      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${field("Current manager password", "managerPassword", "", "password", `${s.id ? "" : "required"} maxlength="128" autocomplete="current-password"`)}<small class="sub">Required when creating an account or setting a new staff password.</small>${select("Role", "role", ["waiter", "manager"], s.role === "manager" ? "manager" : "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
+      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${field("Current manager password", "managerPassword", "", "password", `${s.id ? "" : "required"} maxlength="128" autocomplete="current-password"`)}<small class="sub">Required when creating an account or setting a new staff password.</small>${select("Role", "role", ["waiter", "kitchen", "manager"], ["waiter", "kitchen", "manager"].includes(s.role) ? s.role : "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
         "Account status",
         "active",
         [
