@@ -106,6 +106,9 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
   await page
     .getByLabel("Password (12+ characters)")
     .fill("waiter-ui-test-password");
+  await page
+    .getByLabel("Current manager password")
+    .fill("manager-ui-test-password");
   await page.getByLabel("Monthly salary (Rs.)").fill("25000");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   const member = page.locator(".staff-card").filter({ hasText: "Ram Poudel" });
@@ -261,6 +264,8 @@ test("manager and waiter receive new, ready and served notifications", async ({
   );
   expect(login.ok()).toBe(true);
   async function action(action, payload) {
+    if (action === "staff.save" && payload.password)
+      payload = { ...payload, managerPassword: "manager-ui-test-password" };
     const response = await managerContext.request.post(
       "http://127.0.0.1:3138/api/action",
       { data: { action, payload } },

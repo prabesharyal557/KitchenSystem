@@ -278,6 +278,16 @@ export class RestaurantCoordinator extends DurableObject<Env> {
       if (path === "/api/state" && request.method === "GET") return json(snapshot(state, user));
       if (path === "/api/action" && request.method === "POST") {
         const effects: Effects = { credentials: new Map(), revoke: new Set() };
+        if (payload.action === "staff.save") {
+          const parameters = payload.payload || {};
+          const existing = state.staff.find((staff) => staff.id === parameters.id);
+          if (!existing || parameters.password) {
+            manager(user);
+            const credential = await this.env.DB.prepare("SELECT hash FROM credentials WHERE id = ?").bind(user.id).first<{ hash: string }>();
+            const managerPassword = typeof parameters.managerPassword === "string" && parameters.managerPassword.length <= 128 ? parameters.managerPassword : "";
+            requireThat(Boolean(credential && matches(managerPassword, credential.hash)), "Manager password is incorrect.", 403);
+          }
+        }
         mutate(state, user, payload.action, payload.payload || {}, effects);
         const statements: D1PreparedStatement[] = [this.env.DB.prepare("UPDATE state SET body = ? WHERE id = 1").bind(JSON.stringify(state))];
         for (const [staffId, hash] of effects.credentials) statements.push(this.env.DB.prepare("INSERT INTO credentials (id, hash) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET hash = excluded.hash").bind(staffId, hash));

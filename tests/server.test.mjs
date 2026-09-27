@@ -65,6 +65,12 @@ async function request(path, payload, cookie = managerCookie, extra = {}) {
   };
 }
 async function action(action, payload, cookie) {
+  if (
+    action === "staff.save" &&
+    payload.password &&
+    payload.managerPassword === undefined
+  )
+    payload = { ...payload, managerPassword: "test-manager-password" };
   return request("action", { action, payload }, cookie);
 }
 before(start);
@@ -92,6 +98,20 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   assert.equal(state.orders.length, 0);
 });
 test("staff accounts, hashing, role boundaries and private payroll", async () => {
+  const denied = await request("action", {
+    action: "staff.save",
+    payload: {
+      name: "Denied Staff",
+      username: "denied",
+      password: "denied-test-password",
+      managerPassword: "wrong-manager-password",
+      role: "waiter",
+      salary: 25000,
+      active: true,
+    },
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(denied.data.error, "Manager password is incorrect.");
   const r = await action("staff.save", {
     name: "Waiter Test",
     username: "waiter",

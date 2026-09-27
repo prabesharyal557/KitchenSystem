@@ -531,11 +531,27 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       active,
       joined: existing?.joined || now(),
     };
-    if (!existing || p.password)
+    if (!existing || p.password) {
+      const managerCredential = db
+        .prepare("SELECT hash FROM credentials WHERE id=?")
+        .get(u.id) as { hash: string } | undefined;
+      const managerPassword =
+        typeof p.managerPassword === "string" &&
+        p.managerPassword.length <= 128
+          ? p.managerPassword
+          : "";
+      requireThat(
+        Boolean(
+          managerCredential && matches(managerPassword, managerCredential.hash),
+        ),
+        "Manager password is incorrect.",
+        403,
+      );
       db.prepare("INSERT OR REPLACE INTO credentials VALUES (?, ?)").run(
         member.id,
         hash(password(p.password)),
       );
+    }
     if (existing) Object.assign(existing, member);
     else state.staff.push(member);
     if (existing && (p.password || !active || oldRole !== member.role))

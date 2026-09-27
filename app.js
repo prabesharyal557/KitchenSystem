@@ -728,7 +728,7 @@
     form(
       s.id ? "Manage staff account" : "Add staff account",
       "staff",
-      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${select("Role", "role", ["waiter", "manager"], s.role === "manager" ? "manager" : "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
+      `${field("Full name", "name", s.name, "text", 'required maxlength="100"')}${field("Username", "username", s.username, "text", 'required maxlength="40" autocomplete="off"')}${field(s.id ? "New password (leave blank to keep)" : "Password (12+ characters)", "password", "", "password", `${s.id ? "" : "required"} minlength="12" maxlength="128" autocomplete="new-password"`)}${field("Current manager password", "managerPassword", "", "password", `${s.id ? "" : "required"} maxlength="128" autocomplete="current-password"`)}<small class="sub">Required when creating an account or setting a new staff password.</small>${select("Role", "role", ["waiter", "manager"], s.role === "manager" ? "manager" : "waiter")}${field("Monthly salary (Rs.)", "salary", s.salary ?? 0, "number", 'required min="0" step="0.01"')}${select(
         "Account status",
         "active",
         [
