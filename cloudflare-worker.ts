@@ -339,6 +339,11 @@ export default {
     if (url.pathname === "/health") return secureHeaders(json({ ok: true, database: "cloudflare-d1" }));
     const asset = await env.ASSETS.fetch(request);
     const response = new Response(asset.body, asset);
+    if (
+      url.pathname === "/" ||
+      /\.(?:html|js|css)$/.test(url.pathname)
+    )
+      response.headers.set("Cache-Control", "no-cache, must-revalidate");
     if (url.pathname === "/download/app-debug.apk" && response.ok) response.headers.set("Content-Disposition", 'attachment; filename="Sajilo-Restaurant.apk"');
     return secureHeaders(response);
   },
