@@ -763,6 +763,12 @@ createServer(async (req, res) => {
       output(res, 200, { ok: true });
       return;
     }
+    if (path === "/download" || path === "/download/") {
+      requireThat(req.method === "GET", "Method not allowed.", 405);
+      res.writeHead(302, { Location: "/download/app-debug.apk" });
+      res.end();
+      return;
+    }
     if (path === "/download/app-debug.apk") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
       const apk = join(root, "downloads", "Sajilo-Restaurant.apk");

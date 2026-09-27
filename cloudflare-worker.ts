@@ -337,6 +337,15 @@ export default {
       return secureHeaders(cors(request, new Response(upstream.body, upstream)));
     }
     if (url.pathname === "/health") return secureHeaders(json({ ok: true, database: "cloudflare-d1" }));
+    if (url.pathname === "/download" || url.pathname === "/download/") {
+      url.pathname = "/download/app-debug.apk";
+      return secureHeaders(
+        new Response(null, {
+          status: 302,
+          headers: { Location: url.toString() },
+        }),
+      );
+    }
     const asset = await env.ASSETS.fetch(request);
     const response = new Response(asset.body, asset);
     if (
