@@ -4,12 +4,14 @@
   const app = document.getElementById("app"),
     workspace = document.body.dataset.role;
   const isAndroidApp = Boolean(window.Capacitor?.isNativePlatform?.());
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const isStandaloneApp =
     !isAndroidApp &&
     (window.matchMedia?.("(display-mode: standalone)").matches ||
       window.navigator.standalone === true);
-  const isOfflineClient = isAndroidApp || isStandaloneApp;
-  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  // Prepare Safari storage before Add to Home Screen so the installed app
+  // keeps the same session selector and cached workspace.
+  const isOfflineClient = isAndroidApp || isIos;
   const cloudServer = "https://sajilo-restaurant.aryalprabesh300.workers.dev";
   let apiBase = isAndroidApp ? cloudServer : "";
   if (isAndroidApp) localStorage.removeItem("sajilo-server-url");
@@ -1085,6 +1087,7 @@
       else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
       else if (action === "navigate") navigate(el.dataset.view);
+      else if (action === "retry-startup") location.reload();
       else if (action === "logout") {
         await syncOfflineActions();
         await api("logout", {});
@@ -1372,8 +1375,11 @@
         } catch {}
       });
     } catch (error) {
-        app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isOfflineClient ? "Check your internet connection, then close and reopen the app." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p></div>`;
+      app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isOfflineClient ? "Connect to the internet for the first sign-in. Sajilo will work offline after it has saved your workspace." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p>${isOfflineClient ? button("Try again", "retry-startup") : ""}</div>`;
     }
   }
+  window.addEventListener("online", () => {
+    if (document.querySelector(".startup-error")) location.reload();
+  });
   init();
 })();
