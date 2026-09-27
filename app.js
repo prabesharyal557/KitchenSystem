@@ -563,7 +563,8 @@
       sessionScope = scope;
       scopeStorage.setItem("sajilo-session-scope", scope);
     }
-    if (["state", "action"].includes(path)) await saveLocalState(result);
+    if (["login", "state", "action"].includes(path))
+      await saveLocalState(result);
     return result;
   }
   function toast(message) {
@@ -1269,7 +1270,7 @@
       errorBox = f.querySelector(".form-error");
     errorBox.textContent = "";
     try {
-    if (type === "login") {
+      if (type === "login") {
         busy = true;
         f.querySelector('button[type="submit"]').disabled = true;
         try {
@@ -1336,7 +1337,7 @@
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isAndroidApp ? '<div class="ios-install"><b>Android v1.2</b><span>Online and offline mode</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
       await syncOfflineActions();

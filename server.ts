@@ -749,7 +749,7 @@ createServer(async (req, res) => {
         );
         session(req, res, u!);
         limits.delete(req.socket.remoteAddress || "");
-        output(res, 200, { user: u });
+        output(res, 200, snapshot(s, u!));
         return;
       }
       if (path === "/api/logout" && req.method === "POST") {

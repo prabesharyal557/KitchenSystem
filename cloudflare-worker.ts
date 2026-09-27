@@ -283,7 +283,7 @@ export class RestaurantCoordinator extends DurableObject<Env> {
         requireThat(state.settings.open || user.role === "manager", "Restaurant is closed. Please ask your manager to reopen it.", 403);
         const setCookie = await this.createSession(request, user);
         this.attempts.delete(limitKey);
-        return json({ user }, 200, { "Set-Cookie": setCookie });
+        return json(snapshot(state, user), 200, { "Set-Cookie": setCookie });
       }
       if (path === "/api/logout" && request.method === "POST") {
         await this.env.DB.prepare("DELETE FROM sessions WHERE token = ?").bind(sha256(sessionToken(request))).run();
