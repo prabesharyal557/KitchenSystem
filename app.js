@@ -249,6 +249,8 @@
     syncingOffline = false,
     lastApiOffline = false;
   async function prepareOfflineShell() {
+    // Android loads these files from inside the APK, so its shell is always ready.
+    if (isAndroidApp) return true;
     if (!("serviceWorker" in navigator)) return false;
     try {
       await navigator.serviceWorker.register("/sw.js");

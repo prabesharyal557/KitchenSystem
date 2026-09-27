@@ -43,7 +43,7 @@ To use several devices on the same trusted Wi-Fi/LAN, stop the existing server w
 
 ## Android APK
 
-Run `npm run android:debug` with JDK 21 to create `android/app/build/outputs/apk/debug/app-debug.apk`. New APK installs connect to the Cloudflare production site automatically, so a restaurant computer does not need to remain running.
+Run `npm run android:debug` with JDK 21 to create `android/app/build/outputs/apk/debug/app-debug.apk`. The Android screens are bundled inside the APK so the app can always start without internet. When online, it connects directly to the Cloudflare API; a restaurant computer does not need to remain running.
 
 Download the published APK from <https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk>.
 
