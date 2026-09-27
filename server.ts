@@ -607,7 +607,7 @@ const mime: Record<string, string> = {
 };
 createServer(async (req, res) => {
   const origin = req.headers.origin;
-  const capacitorOrigin = origin === "capacitor://localhost" || origin === "http://localhost";
+  const capacitorOrigin = origin === "capacitor://localhost" || origin === "http://localhost" || origin === "https://localhost";
   if (capacitorOrigin) {
     res.setHeader("Access-Control-Allow-Origin", origin!);
     res.setHeader("Access-Control-Allow-Credentials", "true");

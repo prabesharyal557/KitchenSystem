@@ -5,12 +5,8 @@
     workspace = document.body.dataset.role;
   const isAndroidApp = Boolean(window.Capacitor?.isNativePlatform?.());
   const cloudServer = "https://sajilo-restaurant.aryalprabesh300.workers.dev";
-  let apiBase = isAndroidApp
-    ? (localStorage.getItem("sajilo-server-url") || cloudServer).replace(
-        /\/$/,
-        "",
-      )
-    : "";
+  let apiBase = isAndroidApp ? cloudServer : "";
+  if (isAndroidApp) localStorage.removeItem("sajilo-server-url");
   // The tab stores only a selector; the authentication token remains HttpOnly.
   const newSessionScope = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
@@ -772,11 +768,6 @@
     const { action, id } = el.dataset;
     try {
       if (action === "enable-alerts") await enableOrderAlerts();
-      else if (action === "change-server") {
-        localStorage.removeItem("sajilo-server-url");
-        apiBase = "";
-        location.reload();
-      }
       else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
       else if (action === "navigate") navigate(el.dataset.view);
@@ -945,19 +936,7 @@
       errorBox = f.querySelector(".form-error");
     errorBox.textContent = "";
     try {
-    if (type === "server") {
-      try {
-        const url = new URL(String(p.server));
-        if (!/^https?:$/.test(url.protocol)) throw new Error("Use an http:// or https:// address.");
-        apiBase = url.origin;
-        await api("bootstrap");
-        localStorage.setItem("sajilo-server-url", apiBase);
-        location.reload();
-      } catch (error) {
-        apiBase = "";
-        errorBox.textContent = error.message === "Failed to fetch" ? "Could not reach this server. Check the Wi‑Fi address and make sure npm run dev:lan is running." : error.message;
-      }
-    } else if (type === "login") {
+    if (type === "login") {
         busy = true;
         f.querySelector('button[type="submit"]').disabled = true;
         try {
@@ -1012,12 +991,8 @@
   async function init() {
     try {
       if (!workspace) {
-        if (isAndroidApp && !apiBase) {
-          app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">RESTAURANT CONNECTION</span><h1>Connect your<br>restaurant.</h1><p>Enter the address of the computer running Sajilo on your restaurant Wi‑Fi.</p></section><section class="login-card"><span class="eyebrow">FIRST-TIME SETUP</span><h1>Where is your server?</h1><p class="sub">Example: <code>http://192.168.1.10:3000</code></p><form class="form-grid" data-form="server"><label>Restaurant server address<input name="server" type="url" inputmode="url" placeholder="http://192.168.1.10:3000" required></label><div class="form-error" role="alert"></div><button class="button" type="submit">Connect →</button></form><small>Your phone and restaurant computer must use the same Wi‑Fi.</small></section></main>`;
-          return;
-        }
         await api("bootstrap");
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.${isAndroidApp ? '<br><button type="button" class="link-button" data-action="change-server">Change restaurant server</button>' : ''}</small></section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small></section></main>`;
         return;
       }
       db = await api("state");
@@ -1057,7 +1032,7 @@
         }
       }, 4000);
     } catch (error) {
-      app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>Start the Sajilo server with <code>npm start</code>, then open its address.</p></div>`;
+      app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isAndroidApp ? "Check your internet connection, then close and reopen the app." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p></div>`;
     }
   }
   init();

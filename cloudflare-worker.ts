@@ -76,7 +76,7 @@ function sessionToken(request: Request) {
   return new RegExp(`(?:^|;\\s*)${name}=([^;]+)`).exec(request.headers.get("Cookie") || "")?.[1] || "";
 }
 function cookie(request: Request, value: string, maxAge: number) {
-  const crossOrigin = ["capacitor://localhost", "http://localhost"].includes(request.headers.get("Origin") || "");
+  const crossOrigin = ["capacitor://localhost", "http://localhost", "https://localhost"].includes(request.headers.get("Origin") || "");
   return `${cookieName(request)}=${value}; HttpOnly; ${crossOrigin ? "SameSite=None; " : "SameSite=Strict; "}Secure; Path=/; Max-Age=${maxAge}`;
 }
 async function parseBody(request: Request) {
@@ -304,7 +304,7 @@ export class RestaurantCoordinator extends DurableObject<Env> {
   }
 }
 
-const allowedMobileOrigins = new Set(["capacitor://localhost", "http://localhost"]);
+const allowedMobileOrigins = new Set(["capacitor://localhost", "http://localhost", "https://localhost"]);
 function secureHeaders(response: Response) {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");

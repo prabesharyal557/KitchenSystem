@@ -4,8 +4,8 @@ const config: CapacitorConfig = {
   appId: "com.prabesharyal557.kitchensystem",
   appName: "Sajilo Restaurant",
   webDir: "mobile-www",
-  android: {
-    allowMixedContent: true,
+  server: {
+    url: "https://sajilo-restaurant.aryalprabesh300.workers.dev",
   },
 };
 
