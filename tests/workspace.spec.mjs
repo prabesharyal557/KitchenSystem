@@ -7,6 +7,88 @@ import { once } from "node:events";
 
 test.describe.configure({ mode: "serial" });
 
+test("Android reopens saved workspace with cloud requests blocked", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "onLine", { get: () => false });
+    const saved = {
+      user: { id: "offline-test", name: "Offline Kitchen", role: "kitchen" },
+      settings: { name: "Offline Restaurant", open: true, taxRate: 13 },
+      orders: [],
+    };
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: { CapacitorSQLite: {
+        createConnection: async () => {},
+        open: async () => {},
+        execute: async () => {},
+        query: async ({ statement }) => ({ values: statement.includes("state_cache") ? [{ body: JSON.stringify(saved) }] : [] }),
+      } },
+    };
+  });
+  let cloudRequests = 0;
+  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", async route => {
+    cloudRequests++;
+    await route.abort("internetdisconnected");
+  });
+  await page.goto("/");
+  await expect(page).toHaveURL(/kitchen\.html/);
+  await expect(page.locator(".profile")).toContainText("Offline Kitchen");
+  await expect(page.locator(".connection")).toContainText("Offline");
+  await page.reload();
+  await expect(page.locator(".profile")).toContainText("Offline Kitchen");
+  expect(cloudRequests).toBe(0);
+});
+
+test("Android saves a food order locally when fetch fails", async ({ page }) => {
+  await page.addInitScript(() => {
+    const initial = {
+      user: { id: "offline-waiter", name: "Offline Waiter", role: "waiter" },
+      settings: { name: "Offline Restaurant", open: true, taxRate: 13 },
+      tables: [{ n: 1, seats: 4, status: "available" }],
+      menu: [{ id: "momo", name: "Buff Momo", category: "Momo", price: 200, available: true }],
+      orders: [],
+    };
+    window.Capacitor = { isNativePlatform: () => true, Plugins: { CapacitorSQLite: {
+      createConnection: async () => {}, open: async () => {},
+      execute: async ({ statements }) => {
+        // Model Android's native batch delimiter and single-statement execution.
+        for (const sql of statements.split(";\n")) {
+          if (/^CREATE TABLE IF NOT EXISTS outbox/.test(sql.trim()))
+            localStorage.setItem("test-outbox-created", "true");
+        }
+      },
+      query: async ({ statement }) => ({ values: statement.includes("state_cache")
+        ? [{ body: localStorage.getItem("test-state") || JSON.stringify(initial) }]
+        : JSON.parse(localStorage.getItem("test-outbox") || "[]") }),
+      run: async ({ statement, values }) => {
+        if (statement.includes("state_cache")) localStorage.setItem("test-state", values[0]);
+        if (statement.includes("INSERT OR IGNORE INTO outbox")) {
+          if (!localStorage.getItem("test-outbox-created"))
+            throw new Error("Run: no such table: outbox");
+          const rows = JSON.parse(localStorage.getItem("test-outbox") || "[]");
+          rows.push({ id: values[0], action: values[1], payload: values[2], createdAt: values[3] });
+          localStorage.setItem("test-outbox", JSON.stringify(rows));
+        }
+      },
+    } } };
+  });
+  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", route => route.abort("internetdisconnected"));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Open table" }).click();
+  await page.getByRole("button", { name: "Buff Momo Momo" }).click();
+  await page.getByRole("button", { name: "Place order" }).click();
+  await expect(page.locator(".toast")).toContainText("Saved offline");
+  const saved = await page.evaluate(() => ({
+    orders: JSON.parse(localStorage.getItem("test-state")).orders,
+    queue: JSON.parse(localStorage.getItem("test-outbox")),
+  }));
+  expect(saved.orders).toHaveLength(1);
+  expect(saved.queue).toHaveLength(1);
+  expect(saved.queue[0].action).toBe("order.create");
+  await page.reload();
+  await expect(page.locator(".profile")).toContainText("Offline Waiter");
+});
+
 let server, dataDir;
 test.beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "sajilo-ui-"));

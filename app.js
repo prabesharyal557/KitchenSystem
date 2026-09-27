@@ -277,7 +277,8 @@
     if (!isOfflineClient) return;
     if (isAndroidApp) {
       localSqlite = window.Capacitor?.Plugins?.CapacitorSQLite;
-      if (!localSqlite) return;
+      if (!localSqlite)
+        throw new Error("Android offline database is unavailable. This installation cannot save offline work.");
       try {
         await localSqlite.createConnection({
           database: offlineDatabase,
@@ -288,12 +289,14 @@
         });
       } catch {}
       await localSqlite.open({ database: offlineDatabase, readonly: false });
-      await localSqlite.execute({
-        database: offlineDatabase,
-        statements:
-          "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL);",
-        transaction: true,
-      });
+      // Native SQLite splits batches on semicolon + newline, not semicolon + space.
+      // Separate calls also repair installations where only state_cache was created.
+      for (const statements of [
+        "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL)",
+      ]) {
+        await localSqlite.execute({ database: offlineDatabase, statements, transaction: true });
+      }
     } else {
       localIndexedDb = await new Promise((resolve, reject) => {
         const request = indexedDB.open(offlineDatabase, 1);
@@ -352,7 +355,7 @@
     if (localSqlite)
       await localSqlite.execute({
         database: offlineDatabase,
-        statements: "DELETE FROM state_cache; DELETE FROM outbox;",
+        statements: "DELETE FROM state_cache;\nDELETE FROM outbox;",
         transaction: true,
       });
     else
@@ -460,7 +463,7 @@
     return state;
   }
   async function syncOfflineActions() {
-    if (!localReady || syncingOffline) return;
+    if (!localReady || syncingOffline || navigator.onLine === false) return;
     syncingOffline = true;
     try {
       let queued;
@@ -481,6 +484,7 @@
       }
       for (const row of queued) {
         const response = await fetch(apiBase + "/api/action", {
+          signal: AbortSignal.timeout(8000),
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -521,14 +525,18 @@
     let response;
     lastApiOffline = false;
     try {
+      if (isOfflineClient && navigator.onLine === false)
+        throw new Error("You are offline. Sign in online once to save your workspace.");
       response = await fetch(
         apiBase + "/api/" + path,
         payload === undefined
           ? {
+              signal: AbortSignal.timeout(8000),
               headers: { "X-Sajilo-Session": scope },
               credentials: isAndroidApp ? "include" : "same-origin",
             }
           : {
+              signal: AbortSignal.timeout(8000),
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -1326,7 +1334,12 @@
     try {
       offlineShellReady = await prepareOfflineShell();
       await initLocalStore();
+      const savedWorkspace = isOfflineClient ? await readLocalState() : null;
       if (!workspace) {
+        if (savedWorkspace?.user && !location.search.includes("message=")) {
+          location.replace("/" + savedWorkspace.user.role + ".html");
+          return;
+        }
         try {
           await api("bootstrap");
         } catch (error) {
@@ -1337,11 +1350,17 @@
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isAndroidApp ? '<div class="ios-install"><b>Android v1.2</b><span>Online and offline mode</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isAndroidApp ? '<div class="ios-install"><b>Android v1.3</b><span>Online and offline mode</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
-      await syncOfflineActions();
-      db = await api("state");
+      // Open saved work immediately, even when a network request would hang.
+      // The poll below authenticates and refreshes against Cloudflare on reconnect.
+      if (savedWorkspace?.user) {
+        db = savedWorkspace;
+        online = false;
+      } else {
+        db = await api("state");
+      }
       if (db.user.role !== workspace) {
         location.href = "/" + db.user.role + ".html";
         return;
