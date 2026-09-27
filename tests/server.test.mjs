@@ -48,8 +48,6 @@ async function stop() {
   }
 }
 async function request(path, payload, cookie = managerCookie, extra = {}) {
-  if (path === "login" && payload && payload.consent === undefined)
-    payload = { ...payload, consent: true };
   const response = await fetch(base + "/api/" + path, {
     method: payload === undefined ? "GET" : "POST",
     headers: {
@@ -84,16 +82,6 @@ after(async () => {
 test("login-only bootstrap, session cookies, unauthenticated access and static allowlist", async () => {
   assert.equal((await request("bootstrap")).data.setup, false);
   assert.equal((await request("state")).status, 401);
-  const consentRequired = await request("login", {
-    username: "manager",
-    password: "test-manager-password",
-    consent: false,
-  });
-  assert.equal(consentRequired.status, 400);
-  assert.equal(
-    consentRequired.data.error,
-    "You must agree to the Terms and Conditions and Privacy Policy.",
-  );
   const r = await request("login", {
     username: "manager",
     password: "test-manager-password",
@@ -111,13 +99,6 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   const state = (await request("state")).data;
   assert.equal(state.sales.length, 0);
   assert.equal(state.orders.length, 0);
-  const consentDb = new DatabaseSync(join(dir, "sajilo.sqlite"));
-  const consent = consentDb
-    .prepare("SELECT policy_version, source FROM user_consents WHERE user_id=?")
-    .get(state.user.id);
-  consentDb.close();
-  assert.equal(consent.policy_version, "2026-09-27");
-  assert.equal(consent.source, "web");
 });
 test("staff accounts, hashing, role boundaries and private payroll", async () => {
   const denied = await request("action", {

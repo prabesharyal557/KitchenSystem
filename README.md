@@ -8,7 +8,7 @@ npm start
 
 For development, run `npm run dev` to automatically restart the server when its source files change. Refresh the browser after frontend edits.
 
-Multiple staff can sign in simultaneously on separate devices or in separate browser tabs. Open the sign-in page in a new tab for each person; each successful login receives an independent session. Refreshing a tab preserves its account, and signing out affects only that session. Duplicating an already signed-in tab initially shares that session until you sign in to another account in the new tab. Password resets, suspension and restaurant closure still revoke the affected staff sessions across all devices. Every sign-in requires acceptance of the current Terms and Conditions and Privacy Policy; the user ID, policy version, time and app source are recorded in the database.
+Multiple staff can sign in simultaneously on separate devices or in separate browser tabs. Open the sign-in page in a new tab for each person; each successful login receives an independent session. Refreshing a tab preserves its account, and signing out affects only that session. Duplicating an already signed-in tab initially shares that session until you sign in to another account in the new tab. Password resets, suspension and restaurant closure still revoke the affected staff sessions across all devices. Terms and Conditions and Privacy Policy pages remain available, but acceptance is temporarily disabled.
 
 The production sign-in page is at <https://sajilo-restaurant.aryalprabesh300.workers.dev>. Add waiter or additional manager accounts in **Staff & payroll**. Run integration checks with `npm test`.
 

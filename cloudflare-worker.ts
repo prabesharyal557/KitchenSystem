@@ -25,7 +25,6 @@ type Effects = { credentials: Map<string, string>; revoke: Set<string> };
 
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
 const SESSION_MILLISECONDS = SESSION_SECONDS * 1000;
-const POLICY_VERSION = "2026-09-27";
 
 const id = () => randomBytes(12).toString("hex");
 const now = () => new Date().toISOString();
@@ -303,19 +302,8 @@ export class RestaurantCoordinator extends DurableObject<Env> {
 
   private async createSession(request: Request, user: Staff) {
     const token = randomBytes(32).toString("hex");
-    const origin = request.headers.get("Origin") || "";
-    const source = origin === "capacitor://localhost" || origin === "http://localhost" || origin === "https://localhost" ? "android" : "web";
     await this.env.DB.batch([
       this.env.DB.prepare("DELETE FROM sessions WHERE expires <= ?").bind(Date.now()),
-      this.env.DB.prepare(`INSERT INTO user_consents
-        (user_id, policy_version, terms_version, privacy_version, consented_at, source)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, policy_version) DO UPDATE SET
-          terms_version = excluded.terms_version,
-          privacy_version = excluded.privacy_version,
-          consented_at = excluded.consented_at,
-          source = excluded.source`)
-        .bind(user.id, POLICY_VERSION, POLICY_VERSION, POLICY_VERSION, now(), source),
       this.env.DB.prepare("INSERT INTO sessions (token, staffId, expires) VALUES (?, ?, ?)").bind(sha256(token), user.id, Date.now() + SESSION_MILLISECONDS),
     ]);
     return cookie(request, token, SESSION_SECONDS);
@@ -348,7 +336,6 @@ export class RestaurantCoordinator extends DurableObject<Env> {
         requireThat(user && valid, "Invalid username or password.", 401);
         requireThat(user.active, "Your account has been suspended.", 403);
         requireThat(state.settings.open || user.role === "manager", "Restaurant is closed. Please ask your manager to reopen it.", 403);
-        requireThat(payload.consent === true, "You must agree to the Terms and Conditions and Privacy Policy.");
         const setCookie = await this.createSession(request, user);
         this.attempts.delete(limitKey);
         return json(snapshot(state, user), 200, { "Set-Cookie": setCookie });
