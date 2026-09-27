@@ -64,6 +64,60 @@
 .login-card .eyebrow {
   font-size: 9px;
 }
+.consent-check {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 10px;
+  align-items: start;
+  color: #52645d;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.consent-check input {
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: #236c57;
+}
+.consent-check a,
+.policy-page a {
+  color: #1f6d57;
+  font-weight: 700;
+}
+.policy-page {
+  min-height: 100vh;
+  background: #f4f7f2;
+  color: #173e33;
+  padding: 48px 20px;
+}
+.policy-shell {
+  max-width: 760px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #dce5da;
+  border-radius: 20px;
+  padding: 42px;
+  box-shadow: 0 18px 50px rgba(25, 62, 51, 0.08);
+}
+.policy-shell h1 {
+  margin: 18px 0 8px;
+}
+.policy-shell h2 {
+  font-size: 20px;
+  margin-top: 30px;
+}
+.policy-shell p,
+.policy-shell li {
+  color: #52645d;
+  line-height: 1.7;
+}
+.policy-meta {
+  font-size: 13px;
+}
+.policy-back {
+  display: inline-block;
+  margin-top: 28px;
+}
 @media (max-width: 850px) {
   .login-intro {
     padding: 40px 28px;
@@ -105,5 +159,12 @@
   }
   .login-card {
     padding: 35px 25px;
+  }
+  .policy-page {
+    padding: 20px 12px;
+  }
+  .policy-shell {
+    padding: 28px 22px;
+    border-radius: 14px;
   }
 }

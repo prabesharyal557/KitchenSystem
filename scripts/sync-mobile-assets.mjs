@@ -8,6 +8,8 @@ for (const file of [
   "manager.html",
   "waiter.html",
   "kitchen.html",
+  "terms.html",
+  "privacy.html",
   "app.js",
   "sw.js",
   "manifest.webmanifest",

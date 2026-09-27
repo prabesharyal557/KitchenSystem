@@ -1,10 +1,12 @@
-const CACHE = "sajilo-shell-v2";
+const CACHE = "sajilo-shell-v3";
 const SHELL = [
   "/",
   "/index.html",
   "/manager.html",
   "/waiter.html",
   "/kitchen.html",
+  "/terms.html",
+  "/privacy.html",
   "/app.js",
   "/style.css",
   "/auth.css",

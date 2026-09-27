@@ -84,7 +84,7 @@ const dataDir = process.env.DATA_DIR || join(root, "data");
 mkdirSync(dataDir, { recursive: true });
 const db = new DatabaseSync(join(dataDir, "sajilo.sqlite"));
 db.exec(
-  "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staffId TEXT NOT NULL, expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS mutations (id TEXT PRIMARY KEY, staffId TEXT NOT NULL, createdAt INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS mutations_createdAt_idx ON mutations(createdAt);",
+  "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staffId TEXT NOT NULL, expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS mutations (id TEXT PRIMARY KEY, staffId TEXT NOT NULL, createdAt INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS mutations_createdAt_idx ON mutations(createdAt); CREATE TABLE IF NOT EXISTS user_consents (user_id TEXT NOT NULL, policy_version TEXT NOT NULL, terms_version TEXT NOT NULL, privacy_version TEXT NOT NULL, consented_at TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('web', 'android', 'ios')), PRIMARY KEY(user_id, policy_version)); CREATE INDEX IF NOT EXISTS user_consents_consented_at_idx ON user_consents(consented_at);",
 );
 const id = () => randomBytes(12).toString("hex");
 const now = () => new Date().toISOString();
@@ -103,6 +103,7 @@ function matches(password: string, stored: string) {
 const dummyHash = hash(randomBytes(32).toString("hex"));
 const sessionSeconds = 30 * 24 * 60 * 60;
 const sessionMilliseconds = sessionSeconds * 1000;
+const policyVersion = "2026-09-27";
 function read(): State {
   return JSON.parse(
     (db.prepare("SELECT body FROM state WHERE id=1").get() as { body: string })
@@ -281,12 +282,29 @@ function manager(u: Staff) {
 function session(req: IncomingMessage, res: ServerResponse, user: Staff) {
   const name = sessionCookieName(req);
   const token = randomBytes(32).toString("hex");
-  db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
-  db.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(
-    createHash("sha256").update(token).digest("hex"),
-    user.id,
-    Date.now() + sessionMilliseconds,
-  );
+  const origin = req.headers.origin || "";
+  const source = ["capacitor://localhost", "http://localhost", "https://localhost"].includes(origin) ? "android" : "web";
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
+    db.prepare(`INSERT INTO user_consents
+      (user_id, policy_version, terms_version, privacy_version, consented_at, source)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id, policy_version) DO UPDATE SET
+        terms_version=excluded.terms_version,
+        privacy_version=excluded.privacy_version,
+        consented_at=excluded.consented_at,
+        source=excluded.source`).run(user.id, policyVersion, policyVersion, policyVersion, now(), source);
+    db.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(
+      createHash("sha256").update(token).digest("hex"),
+      user.id,
+      Date.now() + sessionMilliseconds,
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
   res.setHeader(
     "Set-Cookie",
     `${name}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionSeconds}${process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`,
@@ -620,6 +638,8 @@ const assets: Record<string, string> = {
   "/manager.html": "manager.html",
   "/waiter.html": "waiter.html",
   "/kitchen.html": "kitchen.html",
+  "/terms.html": "terms.html",
+  "/privacy.html": "privacy.html",
   "/app.js": "app.js",
   "/sw.js": "sw.js",
   "/manifest.webmanifest": "manifest.webmanifest",
@@ -748,6 +768,10 @@ createServer(async (req, res) => {
           s.settings.open || u!.role === "manager",
           "Restaurant is closed. Please ask your manager to reopen it.",
           403,
+        );
+        requireThat(
+          p.consent === true,
+          "You must agree to the Terms and Conditions and Privacy Policy.",
         );
         session(req, res, u!);
         limits.delete(req.socket.remoteAddress || "");

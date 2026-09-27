@@ -135,6 +135,7 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
   await page
     .getByLabel("Password", { exact: true })
     .fill("manager-ui-test-password");
+  await page.getByLabel(/I agree to the Terms/).check();
   await page.getByRole("button", { name: "Sign in to workspace" }).click();
   await expect(
     page.getByRole("heading", { name: "Your restaurant, at a glance." }),
@@ -215,6 +216,7 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
   await waiter
     .getByLabel("Password", { exact: true })
     .fill("waiter-ui-test-password");
+  await waiter.getByLabel(/I agree to the Terms/).check();
   await waiter.getByRole("button", { name: "Sign in to workspace" }).click();
   await expect(
     waiter.getByRole("heading", { name: "A place for every guest." }),
@@ -341,7 +343,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
   const login = await managerContext.request.post(
     "http://127.0.0.1:3138/api/login",
     {
-      data: { username: "anisha", password: "manager-ui-test-password" },
+      data: { username: "anisha", password: "manager-ui-test-password", consent: true },
     },
   );
   expect(login.ok()).toBe(true);
@@ -370,6 +372,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
     await page.goto("http://127.0.0.1:3138/");
     await page.getByLabel("Username").fill(username);
     await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByLabel(/I agree to the Terms/).check();
     await page.getByRole("button", { name: "Sign in to workspace" }).click();
     await expect(
       page.getByRole("button", { name: "Enable sound & desktop alerts" }),
@@ -481,6 +484,7 @@ test("different users work simultaneously in the same browser without replacing 
     await page.goto("http://127.0.0.1:3138/");
     await page.getByLabel("Username").fill(username);
     await page.getByLabel("Password", { exact: true }).fill(password);
+    await page.getByLabel(/I agree to the Terms/).check();
     await page.getByRole("button", { name: "Sign in to workspace" }).click();
     await expect(page.getByRole("heading", { name: heading })).toBeVisible();
     return page;
