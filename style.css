@@ -52,6 +52,19 @@ small {
   display: block;
   line-height: 1.7;
 }
+.ios-install {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f5f7f3;
+  line-height: 1.55;
+}
+.ios-install span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
 h1,
 h2,
 p {

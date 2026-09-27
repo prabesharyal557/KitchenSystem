@@ -4,6 +4,12 @@
   const app = document.getElementById("app"),
     workspace = document.body.dataset.role;
   const isAndroidApp = Boolean(window.Capacitor?.isNativePlatform?.());
+  const isStandaloneApp =
+    !isAndroidApp &&
+    (window.matchMedia?.("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true);
+  const isOfflineClient = isAndroidApp || isStandaloneApp;
+  const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
   const cloudServer = "https://sajilo-restaurant.aryalprabesh300.workers.dev";
   let apiBase = isAndroidApp ? cloudServer : "";
   if (isAndroidApp) localStorage.removeItem("sajilo-server-url");
@@ -12,7 +18,7 @@
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
       b.toString(16).padStart(2, "0"),
     ).join("");
-  const scopeStorage = isAndroidApp ? localStorage : sessionStorage;
+  const scopeStorage = isOfflineClient ? localStorage : sessionStorage;
   let sessionScope =
     scopeStorage.getItem("sajilo-session-scope") || newSessionScope();
   scopeStorage.setItem("sajilo-session-scope", sessionScope);
@@ -235,73 +241,139 @@
   }
   const offlineDatabase = "sajilo_offline";
   let localSqlite,
+    localIndexedDb,
     localReady = false,
     syncingOffline = false,
     lastApiOffline = false;
-  async function initLocalStore() {
-    if (!isAndroidApp) return;
-    localSqlite = window.Capacitor?.Plugins?.CapacitorSQLite;
-    if (!localSqlite) return;
-    try {
-      await localSqlite.createConnection({
-        database: offlineDatabase,
-        version: 1,
-        encrypted: false,
-        mode: "no-encryption",
-        readonly: false,
-      });
-    } catch {}
-    await localSqlite.open({ database: offlineDatabase, readonly: false });
-    await localSqlite.execute({
-      database: offlineDatabase,
-      statements:
-        "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL);",
-      transaction: true,
+  const idbRequest = (request) =>
+    new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
     });
+  const idbTransaction = (stores, mode, work) =>
+    new Promise((resolve, reject) => {
+      const transaction = localIndexedDb.transaction(stores, mode);
+      work(transaction);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  async function initLocalStore() {
+    if (!isOfflineClient) return;
+    if (isAndroidApp) {
+      localSqlite = window.Capacitor?.Plugins?.CapacitorSQLite;
+      if (!localSqlite) return;
+      try {
+        await localSqlite.createConnection({
+          database: offlineDatabase,
+          version: 1,
+          encrypted: false,
+          mode: "no-encryption",
+          readonly: false,
+        });
+      } catch {}
+      await localSqlite.open({ database: offlineDatabase, readonly: false });
+      await localSqlite.execute({
+        database: offlineDatabase,
+        statements:
+          "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL);",
+        transaction: true,
+      });
+    } else {
+      localIndexedDb = await new Promise((resolve, reject) => {
+        const request = indexedDB.open(offlineDatabase, 1);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains("state_cache"))
+            database.createObjectStore("state_cache", { keyPath: "id" });
+          if (!database.objectStoreNames.contains("outbox"))
+            database.createObjectStore("outbox", { keyPath: "id" });
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    }
     localReady = true;
   }
   async function saveLocalState(state) {
     if (!localReady || !state?.user) return;
-    await localSqlite.run({
-      database: offlineDatabase,
-      statement:
-        "INSERT OR REPLACE INTO state_cache (id, body, updatedAt) VALUES (1, ?, ?)",
-      values: [JSON.stringify(state), new Date().toISOString()],
-      transaction: true,
-    });
+    const row = {
+      id: 1,
+      body: JSON.stringify(state),
+      updatedAt: new Date().toISOString(),
+    };
+    if (localSqlite)
+      await localSqlite.run({
+        database: offlineDatabase,
+        statement:
+          "INSERT OR REPLACE INTO state_cache (id, body, updatedAt) VALUES (1, ?, ?)",
+        values: [row.body, row.updatedAt],
+        transaction: true,
+      });
+    else
+      await idbTransaction(["state_cache"], "readwrite", (transaction) =>
+        transaction.objectStore("state_cache").put(row),
+      );
   }
   async function readLocalState() {
     if (!localReady) return null;
-    const result = await localSqlite.query({
-      database: offlineDatabase,
-      statement: "SELECT body FROM state_cache WHERE id = 1",
-      values: [],
-    });
-    return result.values?.[0]?.body
-      ? JSON.parse(result.values[0].body)
-      : null;
+    let body;
+    if (localSqlite) {
+      const result = await localSqlite.query({
+        database: offlineDatabase,
+        statement: "SELECT body FROM state_cache WHERE id = 1",
+        values: [],
+      });
+      body = result.values?.[0]?.body;
+    } else {
+      const transaction = localIndexedDb.transaction("state_cache", "readonly");
+      body = (await idbRequest(transaction.objectStore("state_cache").get(1)))
+        ?.body;
+    }
+    return body ? JSON.parse(body) : null;
   }
   async function clearLocalStore() {
     if (!localReady) return;
-    await localSqlite.execute({
-      database: offlineDatabase,
-      statements: "DELETE FROM state_cache; DELETE FROM outbox;",
-      transaction: true,
-    });
+    if (localSqlite)
+      await localSqlite.execute({
+        database: offlineDatabase,
+        statements: "DELETE FROM state_cache; DELETE FROM outbox;",
+        transaction: true,
+      });
+    else
+      await idbTransaction(
+        ["state_cache", "outbox"],
+        "readwrite",
+        (transaction) => {
+          transaction.objectStore("state_cache").clear();
+          transaction.objectStore("outbox").clear();
+        },
+      );
   }
   async function queueOfflineAction(mutationId, action, payload) {
-    await localSqlite.run({
-      database: offlineDatabase,
-      statement:
-        "INSERT OR IGNORE INTO outbox (id, action, payload, createdAt) VALUES (?, ?, ?, ?)",
-      values: [
+    const row = {
+      id: mutationId,
+      action,
+      payload: JSON.stringify(payload),
+      createdAt: new Date().toISOString(),
+    };
+    if (localSqlite)
+      await localSqlite.run({
+        database: offlineDatabase,
+        statement:
+          "INSERT OR IGNORE INTO outbox (id, action, payload, createdAt) VALUES (?, ?, ?, ?)",
+        values: [
         mutationId,
         action,
-        JSON.stringify(payload),
-        new Date().toISOString(),
-      ],
-      transaction: true,
-    });
+          row.payload,
+          row.createdAt,
+        ],
+        transaction: true,
+      });
+    else
+      await idbTransaction(["outbox"], "readwrite", (transaction) =>
+        transaction.objectStore("outbox").put(row),
+      );
   }
   function applyOfflineAction(state, action, payload, mutationId) {
     if (action === "order.create") {
@@ -376,13 +448,23 @@
     if (!localReady || syncingOffline) return;
     syncingOffline = true;
     try {
-      const queued = await localSqlite.query({
-        database: offlineDatabase,
-        statement:
-          "SELECT id, action, payload FROM outbox ORDER BY createdAt, id",
-        values: [],
-      });
-      for (const row of queued.values || []) {
+      let queued;
+      if (localSqlite) {
+        const result = await localSqlite.query({
+          database: offlineDatabase,
+          statement:
+            "SELECT id, action, payload FROM outbox ORDER BY createdAt, id",
+          values: [],
+        });
+        queued = result.values || [];
+      } else {
+        const transaction = localIndexedDb.transaction("outbox", "readonly");
+        queued = await idbRequest(transaction.objectStore("outbox").getAll());
+        queued.sort((a, b) =>
+          `${a.createdAt}:${a.id}`.localeCompare(`${b.createdAt}:${b.id}`),
+        );
+      }
+      for (const row of queued) {
         const response = await fetch(apiBase + "/api/action", {
           method: "POST",
           headers: {
@@ -399,12 +481,17 @@
         if (!response.ok) break;
         const state = await response.json();
         await saveLocalState(state);
-        await localSqlite.run({
-          database: offlineDatabase,
-          statement: "DELETE FROM outbox WHERE id = ?",
-          values: [row.id],
-          transaction: true,
-        });
+        if (localSqlite)
+          await localSqlite.run({
+            database: offlineDatabase,
+            statement: "DELETE FROM outbox WHERE id = ?",
+            values: [row.id],
+            transaction: true,
+          });
+        else
+          await idbTransaction(["outbox"], "readwrite", (transaction) =>
+            transaction.objectStore("outbox").delete(row.id),
+          );
       }
     } catch {
       online = false;
@@ -437,7 +524,7 @@
             },
       );
     } catch (error) {
-      if (isAndroidApp && path === "state") {
+      if (isOfflineClient && path === "state") {
         const cached = await readLocalState();
         if (cached) {
           online = false;
@@ -445,7 +532,7 @@
           return cached;
         }
       }
-      if (isAndroidApp && path === "action" && payload) {
+      if (isOfflineClient && path === "action" && payload) {
         lastApiOffline = true;
         return handleOfflineAction(payload);
       }
@@ -1220,21 +1307,21 @@
   });
   async function init() {
     try {
-      if (isAndroidApp && "serviceWorker" in navigator)
+      if ("serviceWorker" in navigator)
         navigator.serviceWorker.register("/sw.js").catch(() => {});
       await initLocalStore();
       if (!workspace) {
         try {
           await api("bootstrap");
         } catch (error) {
-          const cached = isAndroidApp ? await readLocalState() : null;
+          const cached = isOfflineClient ? await readLocalState() : null;
           if (cached?.user) {
             location.href = "/" + cached.user.role + ".html";
             return;
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small></section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
       await syncOfflineActions();
@@ -1285,7 +1372,7 @@
         } catch {}
       });
     } catch (error) {
-      app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isAndroidApp ? "Check your internet connection, then close and reopen the app." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p></div>`;
+        app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isOfflineClient ? "Check your internet connection, then close and reopen the app." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p></div>`;
     }
   }
   init();

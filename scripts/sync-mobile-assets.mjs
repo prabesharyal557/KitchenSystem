@@ -10,9 +10,11 @@ for (const file of [
   "kitchen.html",
   "app.js",
   "sw.js",
+  "manifest.webmanifest",
   "style.css",
   "auth.css",
   "favicon.svg",
+  "apple-touch-icon.png",
 ]) {
   cpSync(file, `${output}/${file}`);
 }

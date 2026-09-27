@@ -620,15 +620,19 @@ const assets: Record<string, string> = {
   "/kitchen.html": "kitchen.html",
   "/app.js": "app.js",
   "/sw.js": "sw.js",
+  "/manifest.webmanifest": "manifest.webmanifest",
   "/style.css": "style.css",
   "/auth.css": "auth.css",
   "/favicon.svg": "favicon.svg",
+  "/apple-touch-icon.png": "apple-touch-icon.png",
 };
 const mime: Record<string, string> = {
   html: "text/html",
   js: "text/javascript",
   css: "text/css",
   svg: "image/svg+xml",
+  png: "image/png",
+  webmanifest: "application/manifest+json",
 };
 createServer(async (req, res) => {
   const origin = req.headers.origin;

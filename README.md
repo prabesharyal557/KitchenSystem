@@ -47,6 +47,8 @@ Run `npm run android:debug` with JDK 21 to create `android/app/build/outputs/apk
 
 Download the published APK from <https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk>.
 
+On iPhone or iPad, open <https://sajilo-restaurant.aryalprabesh300.workers.dev> in Safari, tap **Share**, choose **Add to Home Screen**, and open Sajilo from the new home-screen icon. iOS cannot install Android APK files. The home-screen app receives website updates automatically and uses IndexedDB for the same offline order queue.
+
 Open the app with internet and sign in once before going offline. The installed app then keeps its screens and latest workspace in local SQLite. While offline, managers and waiters can create orders, kitchen staff and managers can mark orders ready, and waiters can mark ready orders served. Pending changes sync automatically in their original order when internet returns; unique mutation IDs make retries safe.
 
 Staff, password, menu, table, payroll, payment and restaurant-setting changes still require internet because these operations need current authorization and server totals. Do not clear the Android app's storage while it has unsynced work. Account suspension or restaurant closure reaches an offline phone after it reconnects.

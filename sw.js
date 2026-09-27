@@ -1,4 +1,4 @@
-const CACHE = "sajilo-shell-v1";
+const CACHE = "sajilo-shell-v2";
 const SHELL = [
   "/",
   "/index.html",
@@ -9,6 +9,8 @@ const SHELL = [
   "/style.css",
   "/auth.css",
   "/favicon.svg",
+  "/apple-touch-icon.png",
+  "/manifest.webmanifest",
 ];
 
 self.addEventListener("install", (event) => {
