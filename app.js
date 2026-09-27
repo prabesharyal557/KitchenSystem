@@ -245,8 +245,19 @@
   let localSqlite,
     localIndexedDb,
     localReady = false,
+    offlineShellReady = false,
     syncingOffline = false,
     lastApiOffline = false;
+  async function prepareOfflineShell() {
+    if (!("serviceWorker" in navigator)) return false;
+    try {
+      await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const idbRequest = (request) =>
     new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
@@ -638,7 +649,7 @@
           : workspace === "kitchen"
             ? "orders"
             : "tables";
-    app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online ? "" : "offline"}">● ${online ? "Live · syncs every 4s" : "Connection lost · retrying"}</span><time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
+    app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online ? "" : "offline"}">● ${online ? (isOfflineClient && localReady && offlineShellReady ? "Live · offline ready" : "Live · syncs every 4s") : "Offline · changes will sync later"}</span><time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
   }
   function salesFor(date) {
     return db.sales.filter((s) => day(s.createdAt) === date);
@@ -1310,8 +1321,7 @@
   });
   async function init() {
     try {
-      if ("serviceWorker" in navigator)
-        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      offlineShellReady = await prepareOfflineShell();
       await initLocalStore();
       if (!workspace) {
         try {
@@ -1335,6 +1345,15 @@
       }
       render();
       initOrderAlerts();
+      if (
+        isOfflineClient &&
+        offlineShellReady &&
+        localReady &&
+        !localStorage.getItem("sajilo-offline-ready")
+      ) {
+        localStorage.setItem("sajilo-offline-ready", "1");
+        toast("Offline mode is ready on this device");
+      }
       setInterval(async () => {
         if (busy) return;
         const started = generation;
@@ -1360,7 +1379,7 @@
           online = false;
           const c = document.querySelector(".connection");
           if (c) {
-            c.textContent = "● Connection lost · retrying";
+            c.textContent = "● Offline · changes will sync later";
             c.classList.add("offline");
           }
         }
