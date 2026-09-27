@@ -101,6 +101,8 @@ function matches(password: string, stored: string) {
   );
 }
 const dummyHash = hash(randomBytes(32).toString("hex"));
+const sessionSeconds = 30 * 24 * 60 * 60;
+const sessionMilliseconds = sessionSeconds * 1000;
 function read(): State {
   return JSON.parse(
     (db.prepare("SELECT body FROM state WHERE id=1").get() as { body: string })
@@ -283,11 +285,11 @@ function session(req: IncomingMessage, res: ServerResponse, user: Staff) {
   db.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(
     createHash("sha256").update(token).digest("hex"),
     user.id,
-    Date.now() + 43200000,
+    Date.now() + sessionMilliseconds,
   );
   res.setHeader(
     "Set-Cookie",
-    `${name}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`,
+    `${name}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionSeconds}${process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`,
   );
 }
 const limits = new Map<string, { count: number; reset: number }>();

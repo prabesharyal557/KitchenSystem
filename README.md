@@ -31,7 +31,7 @@ For development checks, run `npm ci`, then `npm run typecheck` and `npm run test
 
 ## Architecture and data
 
-Cloudflare Workers serves the production app and API, and Cloudflare D1 is its persistent cloud database for restaurant state, password hashes and sessions. A Durable Object serializes updates from simultaneous staff devices. The Android app also has a private SQLite database for its cached workspace and pending offline actions. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; sessions use random, hashed tokens and HttpOnly cookies. The app escapes user text and enforces a restrictive Content Security Policy.
+Cloudflare Workers serves the production app and API, and Cloudflare D1 is its persistent cloud database. D1 has separate structured tables for settings, restaurant tables, users, menu items, orders, order items, order payments, payment items, staff payments, credentials, sessions and offline mutation IDs. The legacy JSON state row remains temporarily for compatibility, and the Worker updates both layouts atomically. A Durable Object serializes updates from simultaneous staff devices. The Android app also has a private SQLite database for its cached workspace and pending offline actions. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; login cookies are HttpOnly and persist for 30 days unless the user signs out, the manager suspends the account, or the restaurant closes. The app escapes user text and enforces a restrictive Content Security Policy.
 
 Deploy production updates with `npm run cloudflare:deploy`. The Worker configuration and D1 binding are in `wrangler.jsonc`; schema changes belong in `migrations/`.
 

@@ -90,6 +90,7 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   managerCookie = r.cookie;
   assert.match(r.headers.get("set-cookie"), /HttpOnly/);
   assert.match(r.headers.get("set-cookie"), /SameSite=Strict/);
+  assert.match(r.headers.get("set-cookie"), /Max-Age=2592000/);
   assert.equal((await request("bootstrap")).data.setup, false);
   assert.equal((await fetch(base + "/server.ts")).status, 404);
   assert.equal((await fetch(base + "/data/sajilo.sqlite")).status, 404);

@@ -23,6 +23,9 @@ type Env = {
 };
 type Effects = { credentials: Map<string, string>; revoke: Set<string> };
 
+const SESSION_SECONDS = 30 * 24 * 60 * 60;
+const SESSION_MILLISECONDS = SESSION_SECONDS * 1000;
+
 const id = () => randomBytes(12).toString("hex");
 const now = () => new Date().toISOString();
 const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
@@ -116,6 +119,48 @@ function snapshot(state: State, user: Staff) {
     orders: state.orders.map((order) => ({ ...order, items: order.items.map(({ cost, ...item }) => item) })),
     user,
   };
+}
+
+function normalizedStatements(database: D1Database, state: State) {
+  const tables = JSON.stringify(state.tables);
+  const users = JSON.stringify(state.staff);
+  const menu = JSON.stringify(state.menu);
+  const orders = JSON.stringify(state.orders);
+  const orderPayments = JSON.stringify(state.sales);
+  const staffPayments = JSON.stringify(state.payments);
+  return [
+    database.prepare("DELETE FROM order_items"),
+    database.prepare("DELETE FROM order_payment_items"),
+    database.prepare("DELETE FROM orders"),
+    database.prepare("DELETE FROM order_payments"),
+    database.prepare("DELETE FROM staff_payments"),
+    database.prepare("DELETE FROM menu_items"),
+    database.prepare("DELETE FROM restaurant_tables"),
+    database.prepare("DELETE FROM users"),
+    database.prepare("DELETE FROM restaurant_settings"),
+    database
+      .prepare("INSERT INTO restaurant_settings (id, name, is_open, tax_rate) VALUES (1, ?, ?, ?)")
+      .bind(state.settings.name, state.settings.open ? 1 : 0, state.settings.taxRate),
+    database.prepare(`INSERT INTO restaurant_tables (table_number, seats, status)
+      SELECT json_extract(value, '$.n'), json_extract(value, '$.seats'), json_extract(value, '$.status') FROM json_each(?)`).bind(tables),
+    database.prepare(`INSERT INTO users (id, name, username, role, salary, active, joined_at)
+      SELECT json_extract(value, '$.id'), json_extract(value, '$.name'), json_extract(value, '$.username'), json_extract(value, '$.role'), json_extract(value, '$.salary'), json_extract(value, '$.active'), json_extract(value, '$.joined') FROM json_each(?)`).bind(users),
+    database.prepare(`INSERT INTO menu_items (id, name, category, price, cost, available, sort_rank)
+      SELECT json_extract(value, '$.id'), json_extract(value, '$.name'), json_extract(value, '$.category'), json_extract(value, '$.price'), json_extract(value, '$.cost'), json_extract(value, '$.available'), json_extract(value, '$.rank') FROM json_each(?)`).bind(menu),
+    database.prepare(`INSERT INTO orders (id, table_number, status, created_at, paid, served_at, served_by_user_id)
+      SELECT json_extract(value, '$.id'), json_extract(value, '$.table'), json_extract(value, '$.status'), json_extract(value, '$.createdAt'), json_extract(value, '$.paid'), json_extract(value, '$.servedAt'), json_extract(value, '$.servedById') FROM json_each(?)`).bind(orders),
+    database.prepare(`INSERT INTO order_items (order_id, line_number, menu_item_id, item_name, price, cost, quantity)
+      SELECT json_extract(parent.value, '$.id'), CAST(line.key AS INTEGER), json_extract(line.value, '$.id'), json_extract(line.value, '$.name'), json_extract(line.value, '$.price'), json_extract(line.value, '$.cost'), json_extract(line.value, '$.qty') FROM json_each(?) parent JOIN json_each(parent.value, '$.items') line`).bind(orders),
+    database.prepare(`INSERT INTO order_payments (id, table_number, subtotal, cost, tax_rate, tax, total, method, created_at)
+      SELECT json_extract(value, '$.id'), json_extract(value, '$.table'), json_extract(value, '$.subtotal'), json_extract(value, '$.cost'), json_extract(value, '$.taxRate'), json_extract(value, '$.tax'), json_extract(value, '$.total'), json_extract(value, '$.method'), json_extract(value, '$.createdAt') FROM json_each(?)`).bind(orderPayments),
+    database.prepare(`INSERT INTO order_payment_items (payment_id, line_number, menu_item_id, item_name, price, cost, quantity)
+      SELECT json_extract(parent.value, '$.id'), CAST(line.key AS INTEGER), json_extract(line.value, '$.id'), json_extract(line.value, '$.name'), json_extract(line.value, '$.price'), json_extract(line.value, '$.cost'), json_extract(line.value, '$.qty') FROM json_each(?) parent JOIN json_each(parent.value, '$.items') line`).bind(orderPayments),
+    database.prepare(`INSERT INTO staff_payments (id, staff_user_id, amount, salary_month, kind, note, created_at)
+      SELECT json_extract(value, '$.id'), json_extract(value, '$.staffId'), json_extract(value, '$.amount'), json_extract(value, '$.month'), json_extract(value, '$.kind'), json_extract(value, '$.note'), json_extract(value, '$.createdAt') FROM json_each(?)`).bind(staffPayments),
+    database
+      .prepare("INSERT INTO normalized_meta (key, value) VALUES ('state_synced_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .bind(now()),
+  ];
 }
 
 function manager(user: Staff) { requireThat(user.role === "manager", "Manager access required.", 403); }
@@ -218,11 +263,21 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
 export class RestaurantCoordinator extends DurableObject<Env> {
   private attempts = new Map<string, { count: number; reset: number }>();
   private queue: Promise<void> = Promise.resolve();
+  private normalizedReady = false;
+
+  private async ensureNormalized(state: State) {
+    if (this.normalizedReady) return;
+    const marker = await this.env.DB.prepare("SELECT value FROM normalized_meta WHERE key = 'state_synced_at'").first();
+    if (!marker) await this.env.DB.batch(normalizedStatements(this.env.DB, state));
+    this.normalizedReady = true;
+  }
 
   private async state() {
     const row = await this.env.DB.prepare("SELECT body FROM state WHERE id = 1").first<{ body: string }>();
     requireThat(row, "Restaurant database is not initialized.", 503);
-    return JSON.parse(row.body) as State;
+    const state = JSON.parse(row.body) as State;
+    await this.ensureNormalized(state);
+    return state;
   }
 
   private rateLimit(request: Request) {
@@ -249,9 +304,9 @@ export class RestaurantCoordinator extends DurableObject<Env> {
     const token = randomBytes(32).toString("hex");
     await this.env.DB.batch([
       this.env.DB.prepare("DELETE FROM sessions WHERE expires <= ?").bind(Date.now()),
-      this.env.DB.prepare("INSERT INTO sessions (token, staffId, expires) VALUES (?, ?, ?)").bind(sha256(token), user.id, Date.now() + 43_200_000),
+      this.env.DB.prepare("INSERT INTO sessions (token, staffId, expires) VALUES (?, ?, ?)").bind(sha256(token), user.id, Date.now() + SESSION_MILLISECONDS),
     ]);
-    return cookie(request, token, 43_200);
+    return cookie(request, token, SESSION_SECONDS);
   }
 
   async fetch(request: Request) {
@@ -311,7 +366,10 @@ export class RestaurantCoordinator extends DurableObject<Env> {
           }
         }
         mutate(state, user, payload.action, payload.payload || {}, effects);
-        const statements: D1PreparedStatement[] = [this.env.DB.prepare("UPDATE state SET body = ? WHERE id = 1").bind(JSON.stringify(state))];
+        const statements: D1PreparedStatement[] = [
+          this.env.DB.prepare("UPDATE state SET body = ? WHERE id = 1").bind(JSON.stringify(state)),
+          ...normalizedStatements(this.env.DB, state),
+        ];
         for (const [staffId, hash] of effects.credentials) statements.push(this.env.DB.prepare("INSERT INTO credentials (id, hash) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET hash = excluded.hash").bind(staffId, hash));
         for (const staffId of effects.revoke) statements.push(this.env.DB.prepare("DELETE FROM sessions WHERE staffId = ?").bind(staffId));
         if (mutationId) {
