@@ -31,7 +31,7 @@ For development checks, run `npm ci`, then `npm run typecheck` and `npm run test
 
 ## Architecture and data
 
-Cloudflare Workers serves the production app and API, and Cloudflare D1 is its persistent database for restaurant state, password hashes and sessions. A Durable Object serializes updates from simultaneous staff devices while D1 remains the sole persistent data source. `server.ts` and local SQLite remain available for offline development. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; sessions use random, hashed tokens and HttpOnly cookies. The app escapes user text and enforces a restrictive Content Security Policy.
+Cloudflare Workers serves the production app and API, and Cloudflare D1 is its persistent cloud database for restaurant state, password hashes and sessions. A Durable Object serializes updates from simultaneous staff devices. The Android app also has a private SQLite database for its cached workspace and pending offline actions. The server owns authorization, validation, price calculation and atomic writes. Passwords use salted scrypt; sessions use random, hashed tokens and HttpOnly cookies. The app escapes user text and enforces a restrictive Content Security Policy.
 
 Deploy production updates with `npm run cloudflare:deploy`. The Worker configuration and D1 binding are in `wrangler.jsonc`; schema changes belong in `migrations/`.
 
@@ -43,9 +43,13 @@ To use several devices on the same trusted Wi-Fi/LAN, stop the existing server w
 
 ## Android APK
 
-Run `npm run android:debug` to create `android/app/build/outputs/apk/debug/app-debug.apk`. New APK installs connect to the Cloudflare production site automatically, so a restaurant computer does not need to remain running.
+Run `npm run android:debug` with JDK 21 to create `android/app/build/outputs/apk/debug/app-debug.apk`. New APK installs connect to the Cloudflare production site automatically, so a restaurant computer does not need to remain running.
 
 Download the published APK from <https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk>.
+
+Open the app with internet and sign in once before going offline. The installed app then keeps its screens and latest workspace in local SQLite. While offline, managers and waiters can create orders, kitchen staff and managers can mark orders ready, and waiters can mark ready orders served. Pending changes sync automatically in their original order when internet returns; unique mutation IDs make retries safe.
+
+Staff, password, menu, table, payroll, payment and restaurant-setting changes still require internet because these operations need current authorization and server totals. Do not clear the Android app's storage while it has unsynced work. Account suspension or restaurant closure reaches an offline phone after it reconnects.
 
 The default server listens only on `127.0.0.1`. After local setup, a trusted-network deployment can set `HOST=0.0.0.0`; point every device at this one server. Use HTTPS via a reverse proxy and set `SECURE_COOKIE=1` for a hosted deployment. `PORT` defaults to 3000, and `DATA_DIR` can point to persistent storage. Do not run multiple processes against this application database; this version is designed for one restaurant/server process. Back up the database (stop the server before copying the data directory, or use SQLite's backup facility). This repository includes no hosting or automated backup setup.
 

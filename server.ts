@@ -84,7 +84,7 @@ const dataDir = process.env.DATA_DIR || join(root, "data");
 mkdirSync(dataDir, { recursive: true });
 const db = new DatabaseSync(join(dataDir, "sajilo.sqlite"));
 db.exec(
-  "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staffId TEXT NOT NULL, expires INTEGER NOT NULL);",
+  "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staffId TEXT NOT NULL, expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS mutations (id TEXT PRIMARY KEY, staffId TEXT NOT NULL, createdAt INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS mutations_createdAt_idx ON mutations(createdAt);",
 );
 const id = () => randomBytes(12).toString("hex");
 const now = () => new Date().toISOString();
@@ -383,8 +383,20 @@ function mutate(state: State, u: Staff, action: string, p: any) {
         qty,
       };
     });
+    const orderId = p.clientOrderId
+      ? text(p.clientOrderId, "Offline order ID", 40)
+      : id();
+    requireThat(
+      !p.clientOrderId || /^offline-[a-f0-9]{32}$/.test(orderId),
+      "Invalid offline order ID.",
+    );
+    requireThat(
+      !state.orders.some((order) => order.id === orderId),
+      "Order already exists.",
+      409,
+    );
     state.orders.unshift({
-      id: id(),
+      id: orderId,
       table: table!.n,
       status: "new",
       items,
@@ -607,6 +619,7 @@ const assets: Record<string, string> = {
   "/waiter.html": "waiter.html",
   "/kitchen.html": "kitchen.html",
   "/app.js": "app.js",
+  "/sw.js": "sw.js",
   "/style.css": "style.css",
   "/auth.css": "auth.css",
   "/favicon.svg": "favicon.svg",
@@ -751,10 +764,29 @@ createServer(async (req, res) => {
         return;
       }
       if (path === "/api/action" && req.method === "POST") {
+        const mutationId =
+          p.mutationId === undefined ? "" : text(p.mutationId, "Mutation ID", 64);
+        if (mutationId)
+          requireThat(/^[a-f0-9]{32}$/.test(mutationId), "Invalid mutation ID.");
+        if (
+          mutationId &&
+          db.prepare("SELECT id FROM mutations WHERE id=?").get(mutationId)
+        ) {
+          output(res, 200, snapshot(s, u));
+          return;
+        }
         db.exec("BEGIN IMMEDIATE");
         try {
           mutate(s, u, p.action, p.payload || {});
           save(s);
+          if (mutationId) {
+            db.prepare(
+              "INSERT INTO mutations (id, staffId, createdAt) VALUES (?, ?, ?)",
+            ).run(mutationId, u.id, Date.now());
+            db.prepare("DELETE FROM mutations WHERE createdAt < ?").run(
+              Date.now() - 30 * 86400000,
+            );
+          }
           db.exec("COMMIT");
         } catch (e) {
           db.exec("ROLLBACK");

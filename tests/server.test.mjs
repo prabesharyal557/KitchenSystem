@@ -64,14 +64,14 @@ async function request(path, payload, cookie = managerCookie, extra = {}) {
     headers: response.headers,
   };
 }
-async function action(action, payload, cookie) {
+async function action(action, payload, cookie, mutationId) {
   if (
     action === "staff.save" &&
     payload.password &&
     payload.managerPassword === undefined
   )
     payload = { ...payload, managerPassword: "test-manager-password" };
-  return request("action", { action, payload }, cookie);
+  return request("action", { action, payload, mutationId }, cookie);
 }
 before(start);
 after(async () => {
@@ -211,11 +211,23 @@ test("menu categories, costs, availability and server-authoritative order pricin
     "order.create",
     { table: 1, items: [{ id: menuId, qty: 2, price: 1 }] },
     waiterCookie,
+    "0123456789abcdef0123456789abcdef",
   );
   assert.equal(r.status, 200);
   orderId = r.data.orders[0].id;
   assert.equal(r.data.orders[0].items[0].price, 250);
   assert.equal(r.data.tables[0].status, "busy");
+  const retry = await action(
+    "order.create",
+    { table: 1, items: [{ id: menuId, qty: 2, price: 1 }] },
+    waiterCookie,
+    "0123456789abcdef0123456789abcdef",
+  );
+  assert.equal(
+    retry.data.orders.filter((order) => order.table === 1 && !order.paid)
+      .length,
+    1,
+  );
   assert.equal((await action("table.delete", { n: 1 })).status, 400);
   assert.equal(
     (await action("table.update", { n: 1, status: "available" })).status,

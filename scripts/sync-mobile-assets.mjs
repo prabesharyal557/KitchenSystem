@@ -9,6 +9,7 @@ for (const file of [
   "waiter.html",
   "kitchen.html",
   "app.js",
+  "sw.js",
   "style.css",
   "auth.css",
   "favicon.svg",

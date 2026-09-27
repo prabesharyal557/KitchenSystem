@@ -7,7 +7,7 @@
     "dev:lan": "node --watch --env-file=lan.env server.ts",
     "android:assets": "node scripts/sync-mobile-assets.mjs",
     "android:sync": "npm run android:assets && node --require ./scripts/capacitor-shell-fix.cjs ./node_modules/@capacitor/cli/bin/capacitor sync android",
-    "android:debug": "npm run android:sync && set \"GRADLE_USER_HOME=%CD%\\.gradle-apk\" && set \"ANDROID_USER_HOME=%CD%\\.android-apk\" && set \"JAVA_HOME=C:\\Program Files\\Android\\Android Studio\\jbr\" && cd android && gradlew.bat --no-daemon assembleDebug",
+    "android:debug": "npm run android:sync && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-debug.ps1",
     "cloudflare:assets": "node scripts/sync-cloudflare-assets.mjs",
     "cloudflare:dev": "npm run cloudflare:assets && wrangler dev",
     "cloudflare:deploy": "npm run cloudflare:assets && wrangler deploy",
@@ -29,6 +29,7 @@
     "wrangler": "^4.141.0"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^8.1.0",
     "@capacitor/android": "^8.5.2",
     "@capacitor/core": "^8.5.2"
   }

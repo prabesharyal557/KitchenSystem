@@ -12,9 +12,10 @@
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
       b.toString(16).padStart(2, "0"),
     ).join("");
+  const scopeStorage = isAndroidApp ? localStorage : sessionStorage;
   let sessionScope =
-    sessionStorage.getItem("sajilo-session-scope") || newSessionScope();
-  sessionStorage.setItem("sajilo-session-scope", sessionScope);
+    scopeStorage.getItem("sajilo-session-scope") || newSessionScope();
+  scopeStorage.setItem("sajilo-session-scope", sessionScope);
   const money = (n) =>
     "Rs. " +
     Number(n || 0).toLocaleString("en-NP", {
@@ -232,27 +233,224 @@
     );
     dismissOrderAlert(key);
   }
+  const offlineDatabase = "sajilo_offline";
+  let localSqlite,
+    localReady = false,
+    syncingOffline = false,
+    lastApiOffline = false;
+  async function initLocalStore() {
+    if (!isAndroidApp) return;
+    localSqlite = window.Capacitor?.Plugins?.CapacitorSQLite;
+    if (!localSqlite) return;
+    try {
+      await localSqlite.createConnection({
+        database: offlineDatabase,
+        version: 1,
+        encrypted: false,
+        mode: "no-encryption",
+        readonly: false,
+      });
+    } catch {}
+    await localSqlite.open({ database: offlineDatabase, readonly: false });
+    await localSqlite.execute({
+      database: offlineDatabase,
+      statements:
+        "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL);",
+      transaction: true,
+    });
+    localReady = true;
+  }
+  async function saveLocalState(state) {
+    if (!localReady || !state?.user) return;
+    await localSqlite.run({
+      database: offlineDatabase,
+      statement:
+        "INSERT OR REPLACE INTO state_cache (id, body, updatedAt) VALUES (1, ?, ?)",
+      values: [JSON.stringify(state), new Date().toISOString()],
+      transaction: true,
+    });
+  }
+  async function readLocalState() {
+    if (!localReady) return null;
+    const result = await localSqlite.query({
+      database: offlineDatabase,
+      statement: "SELECT body FROM state_cache WHERE id = 1",
+      values: [],
+    });
+    return result.values?.[0]?.body
+      ? JSON.parse(result.values[0].body)
+      : null;
+  }
+  async function clearLocalStore() {
+    if (!localReady) return;
+    await localSqlite.execute({
+      database: offlineDatabase,
+      statements: "DELETE FROM state_cache; DELETE FROM outbox;",
+      transaction: true,
+    });
+  }
+  async function queueOfflineAction(mutationId, action, payload) {
+    await localSqlite.run({
+      database: offlineDatabase,
+      statement:
+        "INSERT OR IGNORE INTO outbox (id, action, payload, createdAt) VALUES (?, ?, ?, ?)",
+      values: [
+        mutationId,
+        action,
+        JSON.stringify(payload),
+        new Date().toISOString(),
+      ],
+      transaction: true,
+    });
+  }
+  function applyOfflineAction(state, action, payload, mutationId) {
+    if (action === "order.create") {
+      if (!["manager", "waiter"].includes(state.user.role))
+        throw new Error("This account cannot place orders.");
+      const table = state.tables?.find((entry) => entry.n === payload.table);
+      if (!table) throw new Error("The table is not available offline.");
+      const items = payload.items.map((line) => {
+        const item = state.menu?.find(
+          (entry) => entry.id === line.id && entry.available,
+        );
+        if (!item) throw new Error("An item is unavailable in the offline menu.");
+        return {
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          cost: item.cost || 0,
+          qty: line.qty,
+        };
+      });
+      payload.clientOrderId ||= `offline-${mutationId}`;
+      state.orders.unshift({
+        id: payload.clientOrderId,
+        table: table.n,
+        status: "new",
+        items,
+        createdAt: new Date().toISOString(),
+        paid: false,
+      });
+      table.status = "busy";
+    } else if (action === "order.advance") {
+      const order = state.orders.find(
+        (entry) => entry.id === payload.id && entry.status === payload.status,
+      );
+      if (!order) throw new Error("This order changed before the connection was lost.");
+      if (["manager", "kitchen"].includes(state.user.role) && ["new", "preparing"].includes(order.status))
+        order.status = "ready";
+      else if (state.user.role === "waiter" && order.status === "ready") {
+        order.status = "served";
+        order.servedAt = new Date().toISOString();
+        order.servedById = state.user.id;
+      } else throw new Error("This account cannot make that offline update.");
+    } else {
+      throw new Error(
+        "This action requires internet. Orders and service status can be saved offline.",
+      );
+    }
+    return state;
+  }
+  async function handleOfflineAction(request) {
+    if (!localReady)
+      throw new Error("Offline storage is not ready. Reopen the app online once.");
+    const state = (await readLocalState()) || db;
+    if (!state?.user)
+      throw new Error("Sign in online once before using the app offline.");
+    applyOfflineAction(
+      state,
+      request.action,
+      request.payload || {},
+      request.mutationId,
+    );
+    await queueOfflineAction(
+      request.mutationId,
+      request.action,
+      request.payload || {},
+    );
+    await saveLocalState(state);
+    online = false;
+    return state;
+  }
+  async function syncOfflineActions() {
+    if (!localReady || syncingOffline) return;
+    syncingOffline = true;
+    try {
+      const queued = await localSqlite.query({
+        database: offlineDatabase,
+        statement:
+          "SELECT id, action, payload FROM outbox ORDER BY createdAt, id",
+        values: [],
+      });
+      for (const row of queued.values || []) {
+        const response = await fetch(apiBase + "/api/action", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Sajilo-Session": sessionScope,
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            action: row.action,
+            payload: JSON.parse(row.payload),
+            mutationId: row.id,
+          }),
+        });
+        if (!response.ok) break;
+        const state = await response.json();
+        await saveLocalState(state);
+        await localSqlite.run({
+          database: offlineDatabase,
+          statement: "DELETE FROM outbox WHERE id = ?",
+          values: [row.id],
+          transaction: true,
+        });
+      }
+    } catch {
+      online = false;
+    } finally {
+      syncingOffline = false;
+    }
+  }
   async function api(path, payload) {
     // A fresh login gets a new slot even when this tab was duplicated from another tab.
     const signingIn = path === "login";
     const scope = signingIn ? newSessionScope() : sessionScope;
-    const response = await fetch(
-      apiBase + "/api/" + path,
-      payload === undefined
-        ? {
-            headers: { "X-Sajilo-Session": scope },
-            credentials: isAndroidApp ? "include" : "same-origin",
-          }
-        : {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Sajilo-Session": scope,
+    let response;
+    lastApiOffline = false;
+    try {
+      response = await fetch(
+        apiBase + "/api/" + path,
+        payload === undefined
+          ? {
+              headers: { "X-Sajilo-Session": scope },
+              credentials: isAndroidApp ? "include" : "same-origin",
+            }
+          : {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Sajilo-Session": scope,
+              },
+              credentials: isAndroidApp ? "include" : "same-origin",
+              body: JSON.stringify(payload),
             },
-            credentials: isAndroidApp ? "include" : "same-origin",
-            body: JSON.stringify(payload),
-          },
-    );
+      );
+    } catch (error) {
+      if (isAndroidApp && path === "state") {
+        const cached = await readLocalState();
+        if (cached) {
+          online = false;
+          lastApiOffline = true;
+          return cached;
+        }
+      }
+      if (isAndroidApp && path === "action" && payload) {
+        lastApiOffline = true;
+        return handleOfflineAction(payload);
+      }
+      throw error;
+    }
     const result = await response.json();
     if (!response.ok) {
       if (workspace && [401, 403].includes(response.status))
@@ -261,8 +459,9 @@
     }
     if (signingIn) {
       sessionScope = scope;
-      sessionStorage.setItem("sajilo-session-scope", scope);
+      scopeStorage.setItem("sajilo-session-scope", scope);
     }
+    if (["state", "action"].includes(path)) await saveLocalState(result);
     return result;
   }
   function toast(message) {
@@ -764,11 +963,19 @@
       .querySelectorAll("dialog button, form button")
       .forEach((b) => (b.disabled = true));
     try {
-      db = await api("action", { action, payload });
+      db = await api("action", {
+        action,
+        payload,
+        mutationId: newSessionScope(),
+      });
       syncOrderAlerts(db);
       if (close) document.querySelector("dialog")?.close();
       render();
-      toast("Saved successfully");
+      toast(
+        lastApiOffline
+          ? "Saved offline · will sync when internet returns"
+          : "Saved successfully",
+      );
       return true;
     } finally {
       busy = false;
@@ -792,7 +999,10 @@
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
       else if (action === "navigate") navigate(el.dataset.view);
       else if (action === "logout") {
+        await syncOfflineActions();
         await api("logout", {});
+        await clearLocalStore();
+        scopeStorage.removeItem("sajilo-session-scope");
         location.href = "/";
       } else if (action === "close") document.querySelector("dialog")?.close();
       else if (action === "period") {
@@ -1010,11 +1220,24 @@
   });
   async function init() {
     try {
+      if (isAndroidApp && "serviceWorker" in navigator)
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      await initLocalStore();
       if (!workspace) {
-        await api("bootstrap");
+        try {
+          await api("bootstrap");
+        } catch (error) {
+          const cached = isAndroidApp ? await readLocalState() : null;
+          if (cached?.user) {
+            location.href = "/" + cached.user.role + ".html";
+            return;
+          }
+          throw error;
+        }
         app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small></section></main>`;
         return;
       }
+      await syncOfflineActions();
       db = await api("state");
       if (db.user.role !== workspace) {
         location.href = "/" + db.user.role + ".html";
@@ -1026,13 +1249,14 @@
         if (busy) return;
         const started = generation;
         try {
+          await syncOfflineActions();
           const fresh = await api("state");
           if (started !== generation || busy) return;
           // Alerts must arrive even while staff type an order or keep a bill open.
           syncOrderAlerts(fresh);
           const changed = JSON.stringify(fresh) !== JSON.stringify(db),
             wasOffline = !online;
-          online = true;
+          online = !lastApiOffline;
           if (
             document.querySelector("dialog[open]") ||
             ["INPUT", "SELECT", "TEXTAREA"].includes(
@@ -1051,6 +1275,15 @@
           }
         }
       }, 4000);
+      window.addEventListener("online", async () => {
+        try {
+          await syncOfflineActions();
+          db = await api("state");
+          online = true;
+          render();
+          toast("Back online · offline work synced");
+        } catch {}
+      });
     } catch (error) {
       app.innerHTML = `<div class="startup-error"><h1>Unable to connect</h1><p>${esc(error.message)}</p><p>${isAndroidApp ? "Check your internet connection, then close and reopen the app." : "Start the Sajilo server with <code>npm start</code>, then open its address."}</p></div>`;
     }

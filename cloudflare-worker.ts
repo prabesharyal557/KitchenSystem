@@ -135,7 +135,10 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
       requireThat(Number.isInteger(quantity), "Quantity must be a whole number.");
       return { id: item.id, name: item.name, price: item.price, cost: item.cost, qty: quantity };
     });
-    state.orders.unshift({ id: id(), table: table.n, status: "new", items, createdAt: now(), paid: false });
+    const orderId = payload.clientOrderId ? text(payload.clientOrderId, "Offline order ID", 40) : id();
+    requireThat(!payload.clientOrderId || /^offline-[a-f0-9]{32}$/.test(orderId), "Invalid offline order ID.");
+    requireThat(!state.orders.some((order) => order.id === orderId), "Order already exists.", 409);
+    state.orders.unshift({ id: orderId, table: table.n, status: "new", items, createdAt: now(), paid: false });
     table.status = "busy";
     return;
   }
@@ -290,6 +293,12 @@ export class RestaurantCoordinator extends DurableObject<Env> {
       const user = await this.account(request, state);
       if (path === "/api/state" && request.method === "GET") return json(snapshot(state, user));
       if (path === "/api/action" && request.method === "POST") {
+        const mutationId = payload.mutationId === undefined ? "" : text(payload.mutationId, "Mutation ID", 64);
+        if (mutationId) requireThat(/^[a-f0-9]{32}$/.test(mutationId), "Invalid mutation ID.");
+        if (mutationId) {
+          const applied = await this.env.DB.prepare("SELECT id FROM mutations WHERE id = ?").bind(mutationId).first<{ id: string }>();
+          if (applied) return json(snapshot(state, user));
+        }
         const effects: Effects = { credentials: new Map(), revoke: new Set() };
         if (payload.action === "staff.save") {
           const parameters = payload.payload || {};
@@ -305,6 +314,10 @@ export class RestaurantCoordinator extends DurableObject<Env> {
         const statements: D1PreparedStatement[] = [this.env.DB.prepare("UPDATE state SET body = ? WHERE id = 1").bind(JSON.stringify(state))];
         for (const [staffId, hash] of effects.credentials) statements.push(this.env.DB.prepare("INSERT INTO credentials (id, hash) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET hash = excluded.hash").bind(staffId, hash));
         for (const staffId of effects.revoke) statements.push(this.env.DB.prepare("DELETE FROM sessions WHERE staffId = ?").bind(staffId));
+        if (mutationId) {
+          statements.push(this.env.DB.prepare("INSERT INTO mutations (id, staffId, createdAt) VALUES (?, ?, ?)").bind(mutationId, user.id, Date.now()));
+          statements.push(this.env.DB.prepare("DELETE FROM mutations WHERE createdAt < ?").bind(Date.now() - 30 * 86400000));
+        }
         await this.env.DB.batch(statements);
         return json(snapshot(state, user));
       }
