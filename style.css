@@ -39,7 +39,10 @@ select {
   outline-offset: 4px;
 }
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
   outline: 3px solid #80a887;
 }
 a {
@@ -264,6 +267,11 @@ h2 {
   display: flex;
   gap: 23px;
   align-items: center;
+}
+.top-actions .button {
+  min-height: 36px;
+  padding: 7px 11px;
+  font-size: 11px;
 }
 .connection {
   font-size: 11px;
@@ -519,6 +527,8 @@ meter::-webkit-meter-optimum-value {
   padding: 10px 18px;
   border-radius: 6px;
   font-size: 12px;
+  min-width: 44px;
+  min-height: 44px;
 }
 .segments .selected {
   background: white;
@@ -1265,7 +1275,21 @@ code {
     font-size: 10px;
   }
   .top-actions {
-    display: none;
+    display: flex;
+    gap: 7px;
+    margin-left: auto;
+  }
+  .top-actions .connection {
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 9px;
+  }
+  .top-actions .button {
+    min-height: 32px;
+    padding: 5px 8px;
+    font-size: 9px;
   }
   .hero {
     flex-direction: column;

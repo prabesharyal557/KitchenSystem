@@ -1,4 +1,4 @@
-const CACHE = "sajilo-shell-v3";
+const CACHE = "sajilo-shell-v4";
 const SHELL = [
   "/",
   "/index.html",
@@ -25,7 +25,9 @@ self.addEventListener("activate", (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))),
+        Promise.all(
+          keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)),
+        ),
       ),
   );
   self.clients.claim();

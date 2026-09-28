@@ -17,6 +17,7 @@ let child,
   menuId,
   orderId,
   saleId;
+let mutationCounter = 1;
 async function start() {
   child = spawn(process.execPath, ["server.ts"], {
     env: {
@@ -71,6 +72,7 @@ async function action(action, payload, cookie, mutationId) {
     payload.managerPassword === undefined
   )
     payload = { ...payload, managerPassword: "test-manager-password" };
+  mutationId ||= (mutationCounter++).toString(16).padStart(32, "0");
   return request("action", { action, payload, mutationId }, cookie);
 }
 before(start);
@@ -97,8 +99,8 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   assert.equal((await fetch(base + "/terms.html")).status, 200);
   assert.equal((await fetch(base + "/privacy.html")).status, 200);
   const release = await (await fetch(base + "/app-version.json")).json();
-  assert.equal(release.versionCode, 5);
-  assert.equal(release.versionName, "1.4");
+  assert.equal(release.versionCode, 6);
+  assert.equal(release.versionName, "1.5");
   const state = (await request("state")).data;
   assert.equal(state.sales.length, 0);
   assert.equal(state.orders.length, 0);
@@ -373,13 +375,8 @@ test("manager and waiter can cancel an unpaid order and free its table", async (
   );
   const cancelledOrderId = created.data.orders[0].id;
   assert.equal(
-    (
-      await action(
-        "order.cancel",
-        { id: cancelledOrderId },
-        kitchenCookie,
-      )
-    ).status,
+    (await action("order.cancel", { id: cancelledOrderId }, kitchenCookie))
+      .status,
     403,
   );
   const cancelled = await action(
@@ -396,13 +393,8 @@ test("manager and waiter can cancel an unpaid order and free its table", async (
     "available",
   );
   assert.equal(
-    (
-      await action(
-        "order.cancel",
-        { id: cancelledOrderId },
-        waiterCookie,
-      )
-    ).status,
+    (await action("order.cancel", { id: cancelledOrderId }, waiterCookie))
+      .status,
     400,
   );
   assert.equal(
@@ -666,4 +658,68 @@ test("cross-origin writes rejected and data survives restart", async () => {
   assert.equal(s.payments.length, 2);
   assert.equal(s.settings.taxRate, 5);
   assert.ok(!JSON.stringify(s).includes("replacement-test-password"));
+});
+
+test("audit, payment reversal, session control, and manager password rotation", async () => {
+  const waiterSession = await request("login", {
+    username: "waiter",
+    password: "replacement-test-password",
+  });
+  assert.equal(waiterSession.status, 200);
+  const before = (await request("state")).data;
+  const original = before.sales.find((sale) => sale.id === saleId);
+  assert.equal(original.status, "completed");
+  assert.deepEqual(original.orderIds, [orderId]);
+  assert.equal(
+    (
+      await action(
+        "sale.reverse",
+        { id: saleId, type: "void", reason: "Wrong payment method" },
+        waiterSession.cookie,
+      )
+    ).status,
+    403,
+  );
+  const reversed = await action("sale.reverse", {
+    id: saleId,
+    type: "void",
+    reason: "Wrong payment method",
+  });
+  assert.equal(reversed.status, 200);
+  assert.equal(
+    reversed.data.sales.find((sale) => sale.id === saleId).status,
+    "voided",
+  );
+  assert.equal(
+    reversed.data.orders.find((order) => order.id === orderId).paid,
+    false,
+  );
+  assert.equal(
+    (
+      await action("sale.reverse", {
+        id: saleId,
+        type: "void",
+        reason: "Again",
+      })
+    ).status,
+    409,
+  );
+  const audit = await request("audit?limit=20");
+  assert.equal(audit.status, 200);
+  assert.ok(audit.data.events.some((event) => event.action === "sale.reverse"));
+  const sessions = await request("sessions");
+  assert.equal(sessions.status, 200);
+  assert.ok(Array.isArray(sessions.data.sessions));
+
+  const changed = await action("account.password", {
+    currentPassword: "test-manager-password",
+    newPassword: "rotated-manager-password",
+  });
+  assert.equal(changed.status, 200);
+  assert.equal((await request("state")).status, 401);
+  const signedIn = await request("login", {
+    username: "manager",
+    password: "rotated-manager-password",
+  });
+  assert.equal(signedIn.status, 200);
 });

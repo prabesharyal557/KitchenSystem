@@ -1,0 +1,5 @@
+# Copy this file to signing.properties. Never commit the real file or keystore.
+storeFile=sajilo-release.jks
+storePassword=replace-with-a-long-random-secret
+keyAlias=sajilo
+keyPassword=replace-with-a-long-random-secret

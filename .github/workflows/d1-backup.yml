@@ -1,0 +1,33 @@
+name: D1 production backup
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Export D1 without changing production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/backup-d1.mjs sajilo-restaurant backups/sajilo-restaurant-${{ github.run_id }}.sql
+      - name: Restore and verify backup in temporary SQLite
+        run: node scripts/verify-d1-backup.mjs backups/sajilo-restaurant-${{ github.run_id }}.sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sajilo-d1-backup-${{ github.run_id }}
+          path: backups/*.sql
+          retention-days: 35
+          if-no-files-found: error

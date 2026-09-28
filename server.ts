@@ -13,6 +13,7 @@ import {
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
+import { calculateBill, roundMoney } from "./domain.ts";
 
 type Role = "manager" | "waiter" | "kitchen";
 type Staff = {
@@ -23,6 +24,7 @@ type Staff = {
   salary: number;
   active: boolean;
   joined: string;
+  mustChangePassword?: boolean;
 };
 type Item = {
   id: string;
@@ -49,6 +51,11 @@ type Order = {
   paid: boolean;
   servedAt?: string;
   servedById?: string;
+  version: number;
+  updatedAt: string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  cancelledById?: string;
 };
 type Sale = {
   id: string;
@@ -61,6 +68,11 @@ type Sale = {
   total: number;
   method: string;
   createdAt: string;
+  status: "completed" | "voided" | "refunded";
+  correctedAt?: string;
+  correctionReason?: string;
+  correctedById?: string;
+  orderIds: string[];
 };
 type State = {
   settings: { name: string; open: boolean; taxRate: number };
@@ -77,7 +89,12 @@ type State = {
     kind: string;
     note: string;
     createdAt: string;
+    baseSalary: number;
+    adjustment: number;
+    remainingAfter: number;
   }[];
+  stateVersion?: number;
+  updatedAt?: string;
 };
 const root = dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || join(root, "data");
@@ -86,9 +103,29 @@ const db = new DatabaseSync(join(dataDir, "sajilo.sqlite"));
 db.exec(
   "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, hash TEXT NOT NULL); CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, staffId TEXT NOT NULL, expires INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS mutations (id TEXT PRIMARY KEY, staffId TEXT NOT NULL, createdAt INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS mutations_createdAt_idx ON mutations(createdAt); CREATE TABLE IF NOT EXISTS user_consents (user_id TEXT NOT NULL, policy_version TEXT NOT NULL, terms_version TEXT NOT NULL, privacy_version TEXT NOT NULL, consented_at TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('web', 'android', 'ios')), PRIMARY KEY(user_id, policy_version)); CREATE INDEX IF NOT EXISTS user_consents_consented_at_idx ON user_consents(consented_at);",
 );
+function ensureColumn(table: string, name: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as {
+    name: string;
+  }[];
+  if (!columns.some((column) => column.name === name))
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+}
+ensureColumn("sessions", "created_at", "INTEGER");
+ensureColumn("sessions", "last_seen_at", "INTEGER");
+ensureColumn("sessions", "user_agent", "TEXT");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS state_versions (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, updated_at TEXT NOT NULL);
+  INSERT OR IGNORE INTO state_versions (id, version, updated_at) VALUES (1, 1, CURRENT_TIMESTAMP);
+  CREATE TABLE IF NOT EXISTS audit_events (
+    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, actor_staff_id TEXT, actor_username TEXT NOT NULL,
+    actor_role TEXT NOT NULL, action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT,
+    reason TEXT, before_value TEXT, after_value TEXT, session_id TEXT, request_id TEXT
+  );
+  CREATE INDEX IF NOT EXISTS audit_events_created_idx ON audit_events(created_at DESC);
+`);
 const id = () => randomBytes(12).toString("hex");
 const now = () => new Date().toISOString();
-const round = (v: number) => Math.round((v + Number.EPSILON) * 100) / 100;
+const round = roundMoney;
 function hash(password: string) {
   const salt = randomBytes(16).toString("hex");
   return salt + ":" + scryptSync(password, salt, 64).toString("hex");
@@ -104,10 +141,36 @@ const dummyHash = hash(randomBytes(32).toString("hex"));
 const sessionSeconds = 30 * 24 * 60 * 60;
 const sessionMilliseconds = sessionSeconds * 1000;
 function read(): State {
-  return JSON.parse(
+  const state = JSON.parse(
     (db.prepare("SELECT body FROM state WHERE id=1").get() as { body: string })
       .body,
-  );
+  ) as State;
+  state.staff = state.staff.map((staff) => ({
+    ...staff,
+    mustChangePassword: Boolean(staff.mustChangePassword),
+  }));
+  state.orders = state.orders.map((order) => ({
+    ...order,
+    version: order.version || 1,
+    updatedAt: order.updatedAt || order.createdAt,
+  }));
+  state.sales = state.sales.map((sale) => ({
+    ...sale,
+    status: sale.status || "completed",
+    orderIds: sale.orderIds || [],
+  }));
+  state.payments = state.payments.map((payment) => ({
+    ...payment,
+    baseSalary: payment.baseSalary ?? 0,
+    adjustment: payment.adjustment ?? 0,
+    remainingAfter: payment.remainingAfter ?? 0,
+  }));
+  const version = db
+    .prepare("SELECT version, updated_at FROM state_versions WHERE id=1")
+    .get() as { version: number; updated_at: string };
+  state.stateVersion = version.version;
+  state.updatedAt = version.updated_at;
+  return state;
 }
 function save(state: State) {
   db.prepare("INSERT OR REPLACE INTO state VALUES (1, ?)").run(
@@ -152,20 +215,23 @@ if (initialManagerPassword) {
   )
     .trim()
     .toLowerCase();
-  const initialManagerName = (process.env.INITIAL_MANAGER_NAME || "Prabesh").trim();
+  const initialManagerName = (
+    process.env.INITIAL_MANAGER_NAME || "Prabesh"
+  ).trim();
   if (!/^[a-z0-9._-]+$/.test(initialManagerUsername))
     throw new Error("INITIAL_MANAGER_USERNAME is invalid.");
-  if (initialManagerPassword.length < 8 || initialManagerPassword.length > 128)
-    throw new Error("INITIAL_MANAGER_PASSWORD must contain 8–128 characters.");
+  if (initialManagerPassword.length < 12 || initialManagerPassword.length > 128)
+    throw new Error("INITIAL_MANAGER_PASSWORD must contain 12–128 characters.");
   let initialManager = state.staff.find(
     (staff) => staff.role === "manager" && staff.active,
   );
   const stored = initialManager
-    ? (db.prepare("SELECT hash FROM credentials WHERE id=?").get(
-        initialManager.id,
-      ) as { hash: string } | undefined)
+    ? (db
+        .prepare("SELECT hash FROM credentials WHERE id=?")
+        .get(initialManager.id) as { hash: string } | undefined)
     : undefined;
-  const passwordChanged = !stored || !matches(initialManagerPassword, stored.hash);
+  const passwordChanged =
+    !stored || !matches(initialManagerPassword, stored.hash);
   const profileChanged =
     !initialManager ||
     initialManager.username !== initialManagerUsername ||
@@ -263,9 +329,13 @@ function sessionKey(req: IncomingMessage) {
   return createHash("sha256").update(token).digest("hex");
 }
 function account(req: IncomingMessage, state: State) {
+  const token = sessionKey(req);
   const s = db
-    .prepare("SELECT staffId FROM sessions WHERE token=? AND expires>?")
-    .get(sessionKey(req), Date.now()) as { staffId: string } | undefined;
+    .prepare(
+      "SELECT staffId, last_seen_at FROM sessions WHERE token=? AND expires>?",
+    )
+    .get(token, Date.now()) as
+    { staffId: string; last_seen_at: number | null } | undefined;
   const u = state.staff.find((u) => u.id === s?.staffId && u.active);
   requireThat(u, "Please sign in.", 401);
   requireThat(
@@ -273,6 +343,11 @@ function account(req: IncomingMessage, state: State) {
     "Restaurant is closed. Staff access is suspended until a manager opens it.",
     403,
   );
+  if (!s!.last_seen_at || s!.last_seen_at < Date.now() - 300000)
+    db.prepare("UPDATE sessions SET last_seen_at=? WHERE token=?").run(
+      Date.now(),
+      token,
+    );
   return u!;
 }
 function manager(u: Staff) {
@@ -282,10 +357,15 @@ function session(req: IncomingMessage, res: ServerResponse, user: Staff) {
   const name = sessionCookieName(req);
   const token = randomBytes(32).toString("hex");
   db.prepare("DELETE FROM sessions WHERE expires<=?").run(Date.now());
-  db.prepare("INSERT INTO sessions VALUES (?, ?, ?)").run(
+  db.prepare(
+    "INSERT INTO sessions (token, staffId, expires, created_at, last_seen_at, user_agent) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(
     createHash("sha256").update(token).digest("hex"),
     user.id,
     Date.now() + sessionMilliseconds,
+    Date.now(),
+    Date.now(),
+    String(req.headers["user-agent"] || "unknown").slice(0, 300),
   );
   res.setHeader(
     "Set-Cookie",
@@ -333,6 +413,8 @@ function snapshot(state: State, user: Staff) {
   if (user.role === "kitchen")
     return {
       settings: state.settings,
+      stateVersion: state.stateVersion,
+      updatedAt: state.updatedAt,
       orders: state.orders
         .filter(
           (o) => !o.paid && ["new", "preparing", "ready"].includes(o.status),
@@ -345,6 +427,8 @@ function snapshot(state: State, user: Staff) {
     };
   return {
     settings: state.settings,
+    stateVersion: state.stateVersion,
+    updatedAt: state.updatedAt,
     tables: state.tables,
     menu: state.menu.map(({ cost, ...i }) => i),
     orders: state.orders.map((o) => ({
@@ -397,13 +481,16 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       "Order already exists.",
       409,
     );
+    const createdAt = now();
     state.orders.unshift({
       id: orderId,
       table: table!.n,
       status: "new",
       items,
-      createdAt: now(),
+      createdAt,
       paid: false,
+      version: 1,
+      updatedAt: createdAt,
     });
     table!.status = "busy";
     return;
@@ -425,12 +512,20 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       "Order already updated. Refresh and try again.",
       409,
     );
+    if (p.expectedVersion !== undefined)
+      requireThat(
+        o!.version === p.expectedVersion,
+        "This order changed on another device. Refresh before trying again.",
+        409,
+      );
     o!.status = (
       { new: "ready", preparing: "ready", ready: "served" } as Record<
         string,
         string
       >
     )[o!.status];
+    o!.version += 1;
+    o!.updatedAt = now();
     if (o!.status === "served") {
       o!.servedAt = now();
       o!.servedById = u.id;
@@ -448,7 +543,28 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       order && ["new", "preparing", "ready", "served"].includes(order.status),
       "Order cannot be cancelled.",
     );
+    requireThat(
+      u.role === "manager" || ["new", "preparing"].includes(order!.status),
+      "A manager must cancel an order that is ready or served.",
+      403,
+    );
+    const reason =
+      typeof p.reason === "string" ? p.reason.trim().slice(0, 300) : "";
+    if (u.role === "manager" && ["ready", "served"].includes(order!.status))
+      requireThat(reason.length >= 3, "Enter a cancellation reason.");
+    if (p.expectedVersion !== undefined)
+      requireThat(
+        order!.version === p.expectedVersion,
+        "This order changed on another device. Refresh before trying again.",
+        409,
+      );
     order!.status = "cancelled";
+    order!.version += 1;
+    order!.updatedAt = now();
+    order!.cancellationReason =
+      reason || "Cancelled before preparation completed";
+    order!.cancelledAt = order!.updatedAt;
+    order!.cancelledById = u.id;
     const table = state.tables.find((t) => t.n === order!.table);
     const tableStillActive = state.orders.some(
       (o) =>
@@ -478,11 +594,12 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       "Choose a payment method.",
     );
     const items = orders.flatMap((o) => o.items);
-    const subtotal = round(items.reduce((s, i) => s + i.price * i.qty, 0));
-    const cost = round(items.reduce((s, i) => s + i.cost * i.qty, 0));
-    const tax = round((subtotal * state.settings.taxRate) / 100);
+    const { subtotal, cost, tax, total } = calculateBill(
+      items,
+      state.settings.taxRate,
+    );
     requireThat(
-      p.expectedTotal === round(subtotal + tax),
+      p.expectedTotal === total,
       "The bill changed. Review the updated bill before collecting payment.",
       409,
     );
@@ -494,11 +611,17 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       cost,
       taxRate: state.settings.taxRate,
       tax,
-      total: round(subtotal + tax),
+      total,
       method: p.method,
       createdAt: now(),
+      status: "completed",
+      orderIds: orders.map((order) => order.id),
     });
-    orders.forEach((o) => (o.paid = true));
+    orders.forEach((o) => {
+      o.paid = true;
+      o.version += 1;
+      o.updatedAt = now();
+    });
     state.tables.find((t) => t.n === p.table)!.status = "available";
     return;
   }
@@ -581,14 +704,17 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       salary: num(p.salary, "Monthly salary"),
       active,
       joined: existing?.joined || now(),
+      mustChangePassword: Boolean(
+        p.role === "manager" &&
+        (existing ? (p.password ? true : existing.mustChangePassword) : true),
+      ),
     };
     if (!existing || p.password) {
       const managerCredential = db
         .prepare("SELECT hash FROM credentials WHERE id=?")
         .get(u.id) as { hash: string } | undefined;
       const managerPassword =
-        typeof p.managerPassword === "string" &&
-        p.managerPassword.length <= 128
+        typeof p.managerPassword === "string" && p.managerPassword.length <= 128
           ? p.managerPassword
           : "";
       requireThat(
@@ -620,15 +746,69 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       ["Salary", "Advance"].includes(p.kind),
       "Choose salary or advance.",
     );
+    const staff = state.staff.find((entry) => entry.id === p.staffId)!;
+    const amount = num(p.amount, "Payment", 0.01);
+    const paidForPeriod = state.payments
+      .filter((entry) => entry.staffId === staff.id && entry.month === p.month)
+      .reduce((sum, entry) => sum + entry.amount, 0);
     state.payments.unshift({
       id: id(),
       staffId: p.staffId,
-      amount: num(p.amount, "Payment", 0.01),
+      amount,
       month: p.month,
       kind: p.kind,
       note: typeof p.note === "string" ? p.note.slice(0, 300) : "",
       createdAt: now(),
+      baseSalary: staff.salary,
+      adjustment: 0,
+      remainingAfter: round(staff.salary - paidForPeriod - amount),
     });
+  } else if (action === "sale.reverse") {
+    const sale = state.sales.find((entry) => entry.id === p.id);
+    requireThat(
+      sale && sale.status === "completed",
+      "Payment is not available for reversal.",
+      409,
+    );
+    const reason = text(p.reason, "Correction reason", 300);
+    requireThat(reason.length >= 3, "Enter a correction reason.");
+    sale!.status = p.type === "refund" ? "refunded" : "voided";
+    sale!.correctedAt = now();
+    sale!.correctionReason = reason;
+    sale!.correctedById = u.id;
+    for (const order of state.orders.filter((entry) =>
+      sale!.orderIds.includes(entry.id),
+    )) {
+      order.paid = false;
+      order.version += 1;
+      order.updatedAt = sale!.correctedAt!;
+    }
+    const table = state.tables.find((entry) => entry.n === sale!.table);
+    if (table && sale!.orderIds.length) table.status = "busy";
+  } else if (action === "account.password") {
+    const credential = db
+      .prepare("SELECT hash FROM credentials WHERE id=?")
+      .get(u.id) as { hash: string } | undefined;
+    requireThat(
+      Boolean(
+        credential && matches(String(p.currentPassword || ""), credential.hash),
+      ),
+      "Current password is incorrect.",
+      403,
+    );
+    db.prepare("INSERT OR REPLACE INTO credentials VALUES (?, ?)").run(
+      u.id,
+      hash(password(p.newPassword)),
+    );
+    db.prepare("DELETE FROM sessions WHERE staffId=?").run(u.id);
+    u.mustChangePassword = false;
+  } else if (action === "sessions.revoke_all") {
+    const staffId = p.staffId ? text(p.staffId, "Staff ID", 64) : u.id;
+    requireThat(
+      state.staff.some((entry) => entry.id === staffId),
+      "Staff member not found.",
+    );
+    db.prepare("DELETE FROM sessions WHERE staffId=?").run(staffId);
   } else if (action === "settings.save") {
     state.settings = {
       name: text(p.name, "Restaurant name"),
@@ -666,17 +846,28 @@ const mime: Record<string, string> = {
   png: "image/png",
   webmanifest: "application/manifest+json",
 };
-createServer(async (req, res) => {
+async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+  const requestId = id();
+  res.setHeader("X-Request-ID", requestId);
   const origin = req.headers.origin;
-  const capacitorOrigin = origin === "capacitor://localhost" || origin === "http://localhost" || origin === "https://localhost";
+  const capacitorOrigin =
+    origin === "capacitor://localhost" ||
+    origin === "http://localhost" ||
+    origin === "https://localhost";
   if (capacitorOrigin) {
     res.setHeader("Access-Control-Allow-Origin", origin!);
     res.setHeader("Access-Control-Allow-Credentials", "true");
     res.setHeader("Vary", "Origin");
   }
-  if (req.method === "OPTIONS" && new URL(req.url || "/", "http://localhost").pathname.startsWith("/api/")) {
+  if (
+    req.method === "OPTIONS" &&
+    new URL(req.url || "/", "http://localhost").pathname.startsWith("/api/")
+  ) {
     if (capacitorOrigin) {
-      res.writeHead(204, { "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type, X-Sajilo-Session" });
+      res.writeHead(204, {
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, X-Sajilo-Session",
+      });
       res.end();
       return;
     }
@@ -685,7 +876,11 @@ createServer(async (req, res) => {
   }
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "same-origin");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=()",
+  );
   res.setHeader("Cache-Control", "no-store");
   res.setHeader(
     "Content-Security-Policy",
@@ -772,7 +967,12 @@ createServer(async (req, res) => {
           (db.prepare("SELECT hash FROM credentials WHERE id=?").get(u.id) as
             { hash: string } | undefined);
         const valid = matches(pass, credential?.hash || dummyHash);
-        requireThat(u && valid, "Invalid username or password.", 401);
+        if (!u || !valid) {
+          db.prepare(
+            "INSERT INTO audit_events (id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, reason, request_id) VALUES (?, ?, NULL, ?, 'unknown', 'login.failed', 'session', 'Invalid credentials', ?)",
+          ).run(id(), now(), name, requestId);
+          throw new HttpError(401, "Invalid username or password.");
+        }
         requireThat(u!.active, "Your account has been suspended.", 403);
         requireThat(
           s.settings.open || u!.role === "manager",
@@ -780,6 +980,9 @@ createServer(async (req, res) => {
           403,
         );
         session(req, res, u!);
+        db.prepare(
+          "INSERT INTO audit_events (id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, entity_id, request_id) VALUES (?, ?, ?, ?, ?, 'login.success', 'session', ?, ?)",
+        ).run(id(), now(), u!.id, u!.username, u!.role, u!.id, requestId);
         limits.delete(req.socket.remoteAddress || "");
         output(res, 200, snapshot(s, u!));
         return;
@@ -799,11 +1002,71 @@ createServer(async (req, res) => {
         output(res, 200, snapshot(s, u));
         return;
       }
+      if (path === "/api/version" && req.method === "GET") {
+        output(res, 200, {
+          stateVersion: s.stateVersion,
+          updatedAt: s.updatedAt,
+        });
+        return;
+      }
+      if (path === "/api/sessions" && req.method === "GET") {
+        manager(u);
+        const sessions = db
+          .prepare(
+            "SELECT staffId, expires, created_at, last_seen_at, user_agent FROM sessions WHERE expires > ? ORDER BY last_seen_at DESC LIMIT 100",
+          )
+          .all(Date.now());
+        output(res, 200, { sessions });
+        return;
+      }
+      if (path === "/api/audit" && req.method === "GET") {
+        manager(u);
+        const url = new URL(req.url || "/", "http://localhost");
+        const limit = Math.min(
+          100,
+          Math.max(1, Number(url.searchParams.get("limit") || 50)),
+        );
+        const cursor =
+          url.searchParams.get("before") || "9999-12-31T23:59:59.999Z";
+        const events = db
+          .prepare(
+            "SELECT id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, entity_id, reason, before_value, after_value, request_id FROM audit_events WHERE created_at < ? ORDER BY created_at DESC LIMIT ?",
+          )
+          .all(cursor, limit) as any[];
+        output(res, 200, {
+          events,
+          next: events.length === limit ? events.at(-1)?.created_at : null,
+        });
+        return;
+      }
       if (path === "/api/action" && req.method === "POST") {
+        if (u.mustChangePassword && p.action !== "account.password")
+          throw new HttpError(
+            403,
+            "Change your manager password before continuing.",
+          );
         const mutationId =
-          p.mutationId === undefined ? "" : text(p.mutationId, "Mutation ID", 64);
+          p.mutationId === undefined
+            ? ""
+            : text(p.mutationId, "Mutation ID", 64);
         if (mutationId)
-          requireThat(/^[a-f0-9]{32}$/.test(mutationId), "Invalid mutation ID.");
+          requireThat(
+            /^[a-f0-9]{32}$/.test(mutationId),
+            "Invalid mutation ID.",
+          );
+        if (
+          [
+            "order.create",
+            "order.advance",
+            "order.cancel",
+            "sale.pay",
+            "sale.reverse",
+          ].includes(p.action)
+        )
+          requireThat(
+            Boolean(mutationId),
+            "A mutation ID is required for order and payment changes.",
+          );
         if (
           mutationId &&
           db.prepare("SELECT id FROM mutations WHERE id=?").get(mutationId)
@@ -813,7 +1076,14 @@ createServer(async (req, res) => {
         }
         db.exec("BEGIN IMMEDIATE");
         try {
+          const previousVersion = s.stateVersion || 1;
           mutate(s, u, p.action, p.payload || {});
+          const updatedAt = now();
+          db.prepare(
+            "UPDATE state_versions SET version=version+1, updated_at=? WHERE id=1",
+          ).run(updatedAt);
+          s.stateVersion = previousVersion + 1;
+          s.updatedAt = updatedAt;
           save(s);
           if (mutationId) {
             db.prepare(
@@ -823,6 +1093,27 @@ createServer(async (req, res) => {
               Date.now() - 30 * 86400000,
             );
           }
+          const entityId = p.payload?.id || p.payload?.staffId || null;
+          const entityType = String(p.action).split(".")[0] || "action";
+          db.prepare(
+            "INSERT INTO audit_events (id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, entity_id, reason, before_value, after_value, session_id, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          ).run(
+            id(),
+            now(),
+            u.id,
+            u.username,
+            u.role,
+            String(p.action),
+            entityType,
+            entityId,
+            typeof p.payload?.reason === "string"
+              ? p.payload.reason.slice(0, 300)
+              : null,
+            JSON.stringify({ version: previousVersion }),
+            JSON.stringify({ version: s.stateVersion }),
+            sessionKey(req).slice(0, 16),
+            requestId,
+          );
           db.exec("COMMIT");
         } catch (e) {
           db.exec("ROLLBACK");
@@ -835,22 +1126,33 @@ createServer(async (req, res) => {
     }
     if (path === "/health") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
-      output(res, 200, { ok: true });
+      const version = db
+        .prepare("SELECT version, updated_at FROM state_versions WHERE id=1")
+        .get();
+      output(res, 200, {
+        ok: true,
+        database: "sqlite",
+        state: version,
+        checkedAt: now(),
+      });
       return;
     }
     if (path === "/download" || path === "/download/") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
-      res.writeHead(302, { Location: "/download/app-debug.apk" });
+      res.writeHead(302, {
+        Location: "/download/Sajilo-Restaurant-release.apk",
+      });
       res.end();
       return;
     }
-    if (path === "/download/app-debug.apk") {
+    if (path === "/download/Sajilo-Restaurant-release.apk") {
       requireThat(req.method === "GET", "Method not allowed.", 405);
-      const apk = join(root, "downloads", "Sajilo-Restaurant.apk");
+      const apk = join(root, "downloads", "Sajilo-Restaurant-release.apk");
       requireThat(existsSync(apk), "APK has not been built yet.", 404);
       res.writeHead(200, {
         "Content-Type": "application/vnd.android.package-archive",
-        "Content-Disposition": 'attachment; filename="Sajilo-Restaurant.apk"',
+        "Content-Disposition":
+          'attachment; filename="Sajilo-Restaurant-release.apk"',
       });
       res.end(readFileSync(apk));
       return;
@@ -865,14 +1167,45 @@ createServer(async (req, res) => {
     res.end(readFileSync(join(root, file)));
   } catch (error) {
     const known = error instanceof HttpError;
-    if (!known) console.error(error);
+    console.error(
+      JSON.stringify({
+        level: known && error.status < 500 ? "warn" : "error",
+        requestId,
+        method: req.method,
+        endpoint: new URL(req.url || "/", "http://localhost").pathname,
+        status: known ? error.status : 500,
+        message: known
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : "Unknown error",
+        timestamp: now(),
+      }),
+    );
     output(res, known ? error.status : 500, {
       error: known
         ? error.message
         : "The server could not complete this request.",
     });
   }
-}).listen(
+}
+
+let writeQueue: Promise<void> = Promise.resolve();
+const localServer = createServer((req, res) => {
+  const path = new URL(req.url || "/", "http://localhost").pathname;
+  if (req.method === "POST" && path === "/api/action") {
+    const response = writeQueue.then(
+      () => handleRequest(req, res),
+      () => handleRequest(req, res),
+    );
+    writeQueue = response.then(
+      () => undefined,
+      () => undefined,
+    );
+  } else void handleRequest(req, res);
+});
+
+localServer.listen(
   Number(process.env.PORT || 3000),
   process.env.HOST || "127.0.0.1",
   () =>

@@ -12,9 +12,14 @@ android-sdk/
 android/.gradle/
 android/local.properties
 android/app/build/
+android/signing.properties
+android/*.jks
+android/*.keystore
 backups/
 d1-export.sql
 d1-manager-update.sql
 cloudflare-public/
 .wrangler/
 .jdk/
+dist/
+audit-results/

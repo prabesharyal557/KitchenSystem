@@ -1,0 +1,57 @@
+name: Quality gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - name: Validate Worker production bundle
+        run: npm run cloudflare:assets && npx wrangler deploy --dry-run --outdir dist/worker
+
+  android-release:
+    runs-on: windows-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.SAJILO_ANDROID_KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.SAJILO_ANDROID_STORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.SAJILO_ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.SAJILO_ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - name: Restore signing material
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("android/sajilo-release.jks", [Convert]::FromBase64String($env:KEYSTORE_BASE64))
+          @(
+            "storeFile=sajilo-release.jks"
+            "storePassword=$env:STORE_PASSWORD"
+            "keyAlias=$env:KEY_ALIAS"
+            "keyPassword=$env:KEY_PASSWORD"
+          ) | Set-Content -Encoding utf8 android/signing.properties
+      - if: ${{ env.KEYSTORE_BASE64 != '' }}
+        run: npm run android:release
+        shell: pwsh

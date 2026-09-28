@@ -6,6 +6,12 @@ os.userInfo = (...args) => {
   try {
     return originalUserInfo(...args);
   } catch {
-    return { username: "sajilo", uid: -1, gid: -1, shell: process.env.COMSPEC || "cmd.exe", homedir: process.cwd() };
+    return {
+      username: "sajilo",
+      uid: -1,
+      gid: -1,
+      shell: process.env.COMSPEC || "cmd.exe",
+      homedir: process.cwd(),
+    };
   }
 };

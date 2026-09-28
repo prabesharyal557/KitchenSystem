@@ -82,6 +82,7 @@
     alertStorageKey = "",
     audioContext,
     latestAlertState;
+  let auditEvents = [];
   const orderAlerts = new Map();
   function initOrderAlerts() {
     if (!["waiter", "manager", "kitchen"].includes(workspace)) return;
@@ -185,12 +186,11 @@
       if (seenAlerts.has(key)) continue;
       seenAlerts.add(key);
       added = true;
-      const title =
-        ["manager", "kitchen"].includes(workspace)
-          ? "New order received"
-          : order.status === "served"
-            ? "Order marked served"
-            : "Order ready to serve";
+      const title = ["manager", "kitchen"].includes(workspace)
+        ? "New order received"
+        : order.status === "served"
+          ? "Order marked served"
+          : "Order ready to serve";
       const detail = `Table ${order.table} · #${order.id.slice(0, 6)} · ${order.items.map((i) => `${i.qty}× ${i.name}`).join(", ")}`;
       const element = document.createElement("section");
       element.className = "order-alert";
@@ -247,7 +247,27 @@
     localReady = false,
     offlineShellReady = false,
     syncingOffline = false,
-    lastApiOffline = false;
+    lastApiOffline = false,
+    pendingActions = 0,
+    syncError = "",
+    lastSuccessfulSync = localStorage.getItem("sajilo-last-sync") || "";
+  async function refreshPendingActions() {
+    if (!localReady) return 0;
+    if (localSqlite) {
+      const result = await localSqlite.query({
+        database: offlineDatabase,
+        statement: "SELECT COUNT(*) AS count FROM outbox",
+        values: [],
+      });
+      pendingActions = Number(result.values?.[0]?.count || 0);
+    } else {
+      const transaction = localIndexedDb.transaction("outbox", "readonly");
+      pendingActions = Number(
+        await idbRequest(transaction.objectStore("outbox").count()),
+      );
+    }
+    return pendingActions;
+  }
   async function prepareOfflineShell() {
     // Android loads these files from inside the APK, so its shell is always ready.
     if (isAndroidApp) return true;
@@ -278,7 +298,9 @@
     if (isAndroidApp) {
       localSqlite = window.Capacitor?.Plugins?.CapacitorSQLite;
       if (!localSqlite)
-        throw new Error("Android offline database is unavailable. This installation cannot save offline work.");
+        throw new Error(
+          "Android offline database is unavailable. This installation cannot save offline work.",
+        );
       try {
         await localSqlite.createConnection({
           database: offlineDatabase,
@@ -295,7 +317,11 @@
         "CREATE TABLE IF NOT EXISTS state_cache (id INTEGER PRIMARY KEY, body TEXT NOT NULL, updatedAt TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, action TEXT NOT NULL, payload TEXT NOT NULL, createdAt TEXT NOT NULL)",
       ]) {
-        await localSqlite.execute({ database: offlineDatabase, statements, transaction: true });
+        await localSqlite.execute({
+          database: offlineDatabase,
+          statements,
+          transaction: true,
+        });
       }
     } else {
       localIndexedDb = await new Promise((resolve, reject) => {
@@ -312,6 +338,7 @@
       });
     }
     localReady = true;
+    await refreshPendingActions();
   }
   async function saveLocalState(state) {
     if (!localReady || !state?.user) return;
@@ -380,18 +407,14 @@
         database: offlineDatabase,
         statement:
           "INSERT OR IGNORE INTO outbox (id, action, payload, createdAt) VALUES (?, ?, ?, ?)",
-        values: [
-        mutationId,
-        action,
-          row.payload,
-          row.createdAt,
-        ],
+        values: [mutationId, action, row.payload, row.createdAt],
         transaction: true,
       });
     else
       await idbTransaction(["outbox"], "readwrite", (transaction) =>
         transaction.objectStore("outbox").put(row),
       );
+    await refreshPendingActions();
   }
   function applyOfflineAction(state, action, payload, mutationId) {
     if (action === "order.create") {
@@ -403,7 +426,8 @@
         const item = state.menu?.find(
           (entry) => entry.id === line.id && entry.available,
         );
-        if (!item) throw new Error("An item is unavailable in the offline menu.");
+        if (!item)
+          throw new Error("An item is unavailable in the offline menu.");
         return {
           id: item.id,
           name: item.name,
@@ -420,20 +444,29 @@
         items,
         createdAt: new Date().toISOString(),
         paid: false,
+        version: 1,
+        updatedAt: new Date().toISOString(),
       });
       table.status = "busy";
     } else if (action === "order.advance") {
       const order = state.orders.find(
         (entry) => entry.id === payload.id && entry.status === payload.status,
       );
-      if (!order) throw new Error("This order changed before the connection was lost.");
-      if (["manager", "kitchen"].includes(state.user.role) && ["new", "preparing"].includes(order.status))
+      if (!order)
+        throw new Error("This order changed before the connection was lost.");
+      payload.expectedVersion ??= order.version || 1;
+      if (
+        ["manager", "kitchen"].includes(state.user.role) &&
+        ["new", "preparing"].includes(order.status)
+      )
         order.status = "ready";
       else if (state.user.role === "waiter" && order.status === "ready") {
         order.status = "served";
         order.servedAt = new Date().toISOString();
         order.servedById = state.user.id;
       } else throw new Error("This account cannot make that offline update.");
+      order.version = (order.version || 1) + 1;
+      order.updatedAt = new Date().toISOString();
     } else if (action === "order.cancel") {
       if (!["manager", "waiter"].includes(state.user.role))
         throw new Error("This account cannot cancel orders.");
@@ -444,7 +477,21 @@
           ["new", "preparing", "ready", "served"].includes(entry.status),
       );
       if (!order) throw new Error("This order cannot be cancelled offline.");
+      if (
+        state.user.role !== "manager" &&
+        !["new", "preparing"].includes(order.status)
+      )
+        throw new Error(
+          "A manager must cancel an order that is ready or served.",
+        );
+      payload.expectedVersion ??= order.version || 1;
       order.status = "cancelled";
+      order.version = (order.version || 1) + 1;
+      order.updatedAt = new Date().toISOString();
+      order.cancelledAt = order.updatedAt;
+      order.cancelledById = state.user.id;
+      order.cancellationReason =
+        payload.reason || "Cancelled before preparation completed";
       const table = state.tables?.find((entry) => entry.n === order.table);
       const tableStillActive = state.orders.some(
         (entry) =>
@@ -462,7 +509,9 @@
   }
   async function handleOfflineAction(request) {
     if (!localReady)
-      throw new Error("Offline storage is not ready. Reopen the app online once.");
+      throw new Error(
+        "Offline storage is not ready. Reopen the app online once.",
+      );
     const state = (await readLocalState()) || db;
     if (!state?.user)
       throw new Error("Sign in online once before using the app offline.");
@@ -482,8 +531,11 @@
     return state;
   }
   async function syncOfflineActions() {
-    if (!localReady || syncingOffline || navigator.onLine === false) return;
+    if (!localReady || syncingOffline || navigator.onLine === false)
+      return false;
     syncingOffline = true;
+    syncError = "";
+    let changed = false;
     try {
       let queued;
       if (localSqlite) {
@@ -516,7 +568,14 @@
             mutationId: row.id,
           }),
         });
-        if (!response.ok) break;
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({}));
+          syncError =
+            response.status === 409
+              ? `Conflict: ${failure.error || "this order changed on another device"}`
+              : failure.error || "A pending action could not synchronize.";
+          break;
+        }
         const state = await response.json();
         await saveLocalState(state);
         if (localSqlite)
@@ -530,12 +589,21 @@
           await idbTransaction(["outbox"], "readwrite", (transaction) =>
             transaction.objectStore("outbox").delete(row.id),
           );
+        changed = true;
       }
-    } catch {
+      await refreshPendingActions();
+      if (!pendingActions) {
+        lastSuccessfulSync = new Date().toISOString();
+        localStorage.setItem("sajilo-last-sync", lastSuccessfulSync);
+      }
+    } catch (error) {
       online = false;
+      syncError =
+        error instanceof Error ? error.message : "Synchronization failed.";
     } finally {
       syncingOffline = false;
     }
+    return changed;
   }
   async function api(path, payload) {
     // A fresh login gets a new slot even when this tab was duplicated from another tab.
@@ -545,7 +613,9 @@
     lastApiOffline = false;
     try {
       if (isOfflineClient && navigator.onLine === false)
-        throw new Error("You are offline. Sign in online once to save your workspace.");
+        throw new Error(
+          "You are offline. Sign in online once to save your workspace.",
+        );
       response = await fetch(
         apiBase + "/api/" + path,
         payload === undefined
@@ -662,29 +732,32 @@
   }
   function nav() {
     const links =
-      workspace === "manager"
-        ? [
-            ["dashboard", "◈", "Overview"],
-            ["online", "◎", "Online orders"],
-            ["tables", "▦", "Tables"],
-            ["orders", "♨", "Active orders"],
-            ["menu", "☷", "Food menu"],
-            ["staff", "♙", "Staff & payroll"],
-            ["sales", "↗", "Sales reports"],
-            ["settings", "⚙", "Settings"],
-          ]
-        : workspace === "kitchen"
-          ? [["orders", "♨", "Kitchen orders"]]
-          : [
-            ["tables", "▦", "Tables"],
-            ["order", "+", "Take order"],
-            ["orders", "✓", "Ready to serve"],
-            ["history", "◷", "Order history"],
-          ];
+      workspace === "manager" && db.user.mustChangePassword
+        ? [["settings", "⚙", "Secure account"]]
+        : workspace === "manager"
+          ? [
+              ["dashboard", "◈", "Overview"],
+              ["online", "◎", "Online orders"],
+              ["tables", "▦", "Tables"],
+              ["orders", "♨", "Active orders"],
+              ["menu", "☷", "Food menu"],
+              ["staff", "♙", "Staff & payroll"],
+              ["sales", "↗", "Sales reports"],
+              ["settings", "⚙", "Settings"],
+            ]
+          : workspace === "kitchen"
+            ? [["orders", "♨", "Kitchen orders"]]
+            : [
+                ["tables", "▦", "Tables"],
+                ["order", "+", "Take order"],
+                ["orders", "✓", "Ready to serve"],
+                ["history", "◷", "Order history"],
+              ];
     return `<aside class="sidebar"><a class="brand" href="#${workspace === "manager" ? "dashboard" : workspace === "kitchen" ? "orders" : "tables"}">sajilo<span>●</span></a><div class="rest"><div class="restaurant-icon">H</div><div><b>${esc(db.settings.name)}</b><small>${esc(workspace)} workspace</small></div></div><div class="nav-label">WORKSPACE</div><nav>${links.map(([v, icon, label]) => `<button data-action="navigate" data-view="${v}" class="${view === v || (view === "completed" && v === "sales") ? "active" : ""}" ${view === v ? 'aria-current="page"' : ""} title="${label}" aria-label="${label}"><i>${icon}</i><span>${label}</span>${v === "online" ? "<small>SOON</small>" : ""}</button>`).join("")}</nav><div class="side-foot"><div class="open-state ${db.settings.open ? "" : "closed"}">● Restaurant ${db.settings.open ? "open" : "closed"}</div><div class="profile"><div class="avatar">${esc(db.user.name.charAt(0))}</div><div><b>${esc(db.user.name)}</b><small>${esc(db.user.role)}</small></div></div>${button("↪ Sign out", "logout", "", true)}</div></aside>`;
   }
   function render() {
     if (!db) return;
+    if (db.user.mustChangePassword) view = "settings";
     renderedDay = today();
     const pages =
       workspace === "manager"
@@ -711,10 +784,20 @@
           : workspace === "kitchen"
             ? "orders"
             : "tables";
-    app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online ? "" : "offline"}">● ${online ? (isOfflineClient && localReady && offlineShellReady ? "Live · offline ready" : "Live · syncs every 4s") : "Offline · changes will sync later"}</span><time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
+    const syncText = syncingOffline
+      ? "Syncing…"
+      : syncError
+        ? `Sync failed · ${pendingActions} pending`
+        : online
+          ? `${isOfflineClient && localReady && offlineShellReady ? "Live · offline ready" : "Live"}${pendingActions ? ` · ${pendingActions} pending` : lastSuccessfulSync ? ` · synced ${stamp(lastSuccessfulSync)}` : ""}`
+          : `Offline · ${pendingActions} pending`;
+    app.innerHTML = `<div class="app">${nav()}<div class="main"><header class="topbar"><span>Workspace <span class="slash">/</span> <b>${esc(view === "dashboard" ? "Overview" : view.charAt(0).toUpperCase() + view.slice(1))}</b></span><div class="top-actions"><span class="connection ${online && !syncError ? "" : "offline"}" title="${esc(syncError || (lastSuccessfulSync ? `Last sync ${stamp(lastSuccessfulSync)}` : "Not synchronized yet"))}">● ${esc(syncText)}</span>${pendingActions || syncError ? button("Retry", "retry-sync", "", true) : ""}<time>${new Date().toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" })}</time></div></header>${pages[view]()}</div></div>`;
   }
   function salesFor(date) {
-    return db.sales.filter((s) => day(s.createdAt) === date);
+    return db.sales.filter(
+      (s) =>
+        (s.status || "completed") === "completed" && day(s.createdAt) === date,
+    );
   }
   const sum = (rows, key) => rows.reduce((n, r) => n + r[key], 0);
   function topItems(rows) {
@@ -791,14 +874,26 @@
     const [start, end] = range();
     const rows = db.sales.filter((s) => {
       const d = day(s.createdAt);
-      return d >= start && d <= end;
+      return (
+        (s.status || "completed") === "completed" && d >= start && d <= end
+      );
     });
     const revenue = sum(rows, "subtotal"),
       cost = sum(rows, "cost");
     return page(
       view === "completed" ? "Completed sales" : "Sales & performance",
       "Every paid bill, connected to your restaurant. Reporting timezone: Nepal.",
-      `<div class="filterbar"><div class="segments">${["day", "week", "month", "year"].map((p) => `<button data-action="period" data-period="${p}" class="${p === period ? "selected" : ""}">${p[0].toUpperCase() + p.slice(1)}</button>`).join("")}</div>${field("Period containing", "reportDate", reportDate, "date", "required")}<span class="sub">${start} → ${end}</span></div><section class="metrics">${metric("TOTAL COLLECTED", money(sum(rows, "total")), "Includes " + money(sum(rows, "tax")) + " tax", "sales")}${metric("NET SALES", money(revenue), "Sales excluding tax", "sales")}${metric("EST. GROSS PROFIT", money(revenue - cost), "Net sales minus recorded ingredient costs", "sales")}${metric("COMPLETED BILLS", rows.length, "Average bill " + money(rows.length ? sum(rows, "total") / rows.length : 0), "completed")}</section><div class="notice">Gross profit excludes salaries, rent and other expenses. Add accurate ingredient costs in Food menu; zero costs will overstate profit. Weeks start Monday.</div><div class="grid">${card("Payment history", rows.length ? `<div class="table-scroll"><table><thead><tr><th>Bill / time</th><th>Table</th><th>Method</th><th>Collected</th></tr></thead><tbody>${rows.map((s) => `<tr><td><b>#${s.id.slice(0, 8)}</b><small>${stamp(s.createdAt)}</small></td><td>${s.table}</td><td>${s.method}</td><td><b>${money(s.total)}</b></td></tr>`).join("")}</tbody></table></div>` : empty("No paid bills in this period."))}${card("Most selling items", topItems(rows))}</div>`,
+      `<div class="filterbar"><div class="segments">${["day", "week", "month", "year"].map((p) => `<button data-action="period" data-period="${p}" class="${p === period ? "selected" : ""}">${p[0].toUpperCase() + p.slice(1)}</button>`).join("")}</div>${field("Period containing", "reportDate", reportDate, "date", "required")}<span class="sub">${start} → ${end}</span></div><section class="metrics">${metric("TOTAL COLLECTED", money(sum(rows, "total")), "Includes " + money(sum(rows, "tax")) + " tax", "sales")}${metric("NET SALES", money(revenue), "Sales excluding tax", "sales")}${metric("EST. GROSS PROFIT", money(revenue - cost), "Net sales minus recorded ingredient costs", "sales")}${metric("COMPLETED BILLS", rows.length, "Average bill " + money(rows.length ? sum(rows, "total") / rows.length : 0), "completed")}</section><div class="notice">Gross profit excludes salaries, rent and other expenses. Add accurate ingredient costs in Food menu; zero costs will overstate profit. Weeks start Monday.</div><div class="grid">${card("Payment history", rows.length ? `<div class="table-scroll"><table><thead><tr><th>Bill / time</th><th>Table</th><th>Method</th><th>Collected</th><th>Correction</th></tr></thead><tbody>${rows.map((s) => `<tr><td><b>#${s.id.slice(0, 8)}</b><small>${stamp(s.createdAt)}</small></td><td>${s.table}</td><td>${s.method}</td><td><b>${money(s.total)}</b></td><td>${button("Void / refund", "payment-correct", `data-id="${s.id}"`, true)}</td></tr>`).join("")}</tbody></table></div>` : empty("No paid bills in this period."))}${card("Most selling items", topItems(rows))}</div>${card(
+        "Corrected payments",
+        db.sales
+          .filter((s) => (s.status || "completed") !== "completed")
+          .slice(0, 50)
+          .map(
+            (s) =>
+              `<div class="sale-row"><div class="grow"><b>#${s.id.slice(0, 8)} · ${esc(s.status)}</b><small>${stamp(s.correctedAt || s.createdAt)} · ${esc(s.correctionReason || "No reason")}</small></div><b>${money(s.total)}</b></div>`,
+          )
+          .join("") || empty("No payment corrections."),
+      )}`,
     );
   }
   function tables() {
@@ -866,11 +961,11 @@
               paid.filter((p) => p.kind === "Advance"),
               "amount",
             );
-          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${total > s.salary ? "Overpaid / credit" : "Remaining"}</small><b>${money(Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}</div></article>`;
+          return `<article class="card staff-card"><div class="staff-heading"><div class="avatar">${esc(s.name.charAt(0))}</div><div class="grow"><h2>${esc(s.name)}</h2><small>${esc(s.role)} · @${esc(s.username)}</small></div><span class="status ${s.active ? "available" : "pending"}">${s.active ? (!db.settings.open && s.role !== "manager" ? "Closed" : "Active") : "Suspended"}</span></div><div class="pay-summary"><div><small>Monthly salary</small><b>${money(s.salary)}</b></div><div><small>Paid (incl. advances)</small><b>${money(total)}</b></div><div><small>Advance included</small><b>${money(advance)}</b></div><div><small>${paid.length ? "Remaining after last payment" : "Remaining"}</small><b>${money(paid.length && Number.isFinite(paid[0].remainingAfter) ? Math.abs(paid[0].remainingAfter) : Math.abs(s.salary - total))}</b></div></div><div class="actions">${button("Manage access", "staff-edit", `data-id="${s.id}"`, true)}${button("Record payment", "staff-pay", `data-id="${s.id}"`)}${button("Log out all devices", "staff-revoke", `data-id="${s.id}"`, true)}</div></article>`;
         })
         .join(
           "",
-        )}</div><div class="notice">Balances use the current monthly salary; salary changes affect displayed balances. Payment history retains its original amount and salary month. Passwords are never displayed; managers can set a new password.</div>${card(
+        )}</div><div class="notice">Each payment snapshots the salary and remaining balance for that month. Later salary changes do not rewrite recorded payroll history. Passwords are never displayed.</div>${card(
         "Payment ledger · " + esc(staffMonth),
         db.payments
           .filter((p) => p.month === staffMonth)
@@ -884,6 +979,16 @@
     );
   }
   function settings() {
+    const passwordCard = card(
+      "Manager password",
+      `<form data-form="manager-password" class="form-grid">${field("Current password", "currentPassword", "", "password", 'required maxlength="128" autocomplete="current-password"')}${field("New password (12+ characters)", "newPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}<p class="sub">Changing the password signs this manager out on every device.</p><div class="form-error" role="alert"></div><button class="button" type="submit">Change password</button></form>`,
+    );
+    if (db.user.mustChangePassword)
+      return page(
+        "Secure your manager account.",
+        "Choose a strong private password before continuing to the restaurant workspace.",
+        `<div class="notice">Your existing manager credential predates the current security policy. It cannot be used for restaurant actions until it is changed.</div>${passwordCard}`,
+      );
     return page(
       "Make it yours.",
       "Manage restaurant access and the tax applied to unsettled bills.",
@@ -898,7 +1003,11 @@
           ],
           String(db.settings.open),
         )}<p class="sub">Closing signs out waiters. Managers keep access and can reopen the restaurant. Existing paid bills retain their original tax.</p><div class="form-error" role="alert"></div><button class="button" type="submit">Save settings</button></form>`,
-      ),
+      ) +
+        `<div class="grid">${passwordCard}${card(
+          "Sessions & audit",
+          `<p class="sub">Revoke this manager account on every signed-in device, or review recent immutable activity.</p><div class="actions">${button("Log out all devices", "revoke-all", "", true)}${button("Refresh audit", "refresh-audit", "", true)}</div><div class="audit-list">${auditEvents.length ? auditEvents.map((event) => `<div class="sale-row"><div class="grow"><b>${esc(event.action)} · ${esc(event.actor_username)}</b><small>${stamp(event.created_at)}${event.reason ? ` · ${esc(event.reason)}` : ""}</small></div><span class="tag">${esc(event.entity_type)}</span></div>`).join("") : empty("Select Refresh audit to load recent activity.")}</div>`,
+        )}</div>`,
     );
   }
   function onlinePage() {
@@ -971,7 +1080,9 @@
                           )
                         : '<div class="pickup-note">✓ Waiter notified · Awaiting service</div>';
                   const cancelAction =
-                    workspace === "kitchen"
+                    workspace === "kitchen" ||
+                    (workspace === "waiter" &&
+                      !["new", "preparing"].includes(o.status))
                       ? ""
                       : button(
                           "Cancel order",
@@ -1042,7 +1153,7 @@
         db.orders
           .map(
             (o) =>
-              `<div class="sale-row"><div><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small></div><div class="actions"><span class="status">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && ["new", "preparing", "ready", "served"].includes(o.status) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`,
+              `<div class="sale-row"><div><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}${o.cancellationReason ? ` · ${esc(o.cancellationReason)}` : ""}</small></div><div class="actions"><span class="status">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && (workspace === "manager" ? ["new", "preparing", "ready", "served"].includes(o.status) : ["new", "preparing"].includes(o.status)) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`,
           )
           .join("") || empty("No orders yet."),
       ),
@@ -1169,12 +1280,17 @@
     const { action, id } = el.dataset;
     try {
       if (action === "enable-alerts") await enableOrderAlerts();
-      else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
+      else if (action === "retry-sync") {
+        await syncOfflineActions();
+        const fresh = await api("state");
+        db = fresh;
+        online = !lastApiOffline;
+        render();
+      } else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
       else if (action === "dismiss-update") {
         document.querySelector(".app-update")?.remove();
-      }
-      else if (action === "navigate") navigate(el.dataset.view);
+      } else if (action === "navigate") navigate(el.dataset.view);
       else if (action === "retry-startup") location.reload();
       else if (action === "logout") {
         await syncOfflineActions();
@@ -1250,7 +1366,10 @@
       } else if (action === "staff-add") staffForm();
       else if (action === "staff-edit")
         staffForm(db.staff.find((s) => s.id === id));
-      else if (action === "staff-pay")
+      else if (action === "staff-revoke") {
+        if (confirm("Log this staff member out on every device?"))
+          await act("sessions.revoke_all", { staffId: id });
+      } else if (action === "staff-pay")
         form(
           "Record payment · " + esc(db.staff.find((s) => s.id === id).name),
           "staff-pay",
@@ -1273,7 +1392,11 @@
           `data-id="${id}"`,
         );
       else if (action === "advance")
-        await act("order.advance", { id, status: el.dataset.status });
+        await act("order.advance", {
+          id,
+          status: el.dataset.status,
+          expectedVersion: db.orders.find((entry) => entry.id === id)?.version,
+        });
       else if (action === "cancel-order") {
         const order = db.orders.find((entry) => entry.id === id);
         if (
@@ -1282,9 +1405,46 @@
             `Cancel order #${order.id.slice(0, 6)} for Table ${order.table}? The ticket will remain in Order History as cancelled.`,
           )
         )
-          await act("order.cancel", { id });
-      }
-      else if (action === "cart-add") {
+          await act("order.cancel", {
+            id,
+            expectedVersion: order.version,
+            reason:
+              workspace === "manager" &&
+              ["ready", "served"].includes(order.status)
+                ? prompt(
+                    "Why is this ready or served order being cancelled?",
+                  ) || ""
+                : "Cancelled before preparation completed",
+          });
+      } else if (action === "payment-correct") {
+        const sale = db.sales.find((entry) => entry.id === id);
+        form(
+          `Correct payment #${esc(id.slice(0, 8))}`,
+          "payment-correction",
+          `<p class="notice">This preserves the original ${money(sale?.total)} payment and creates an audited correction.</p>${select(
+            "Correction type",
+            "type",
+            [
+              ["void", "Void"],
+              ["refund", "Refund"],
+            ],
+            "void",
+          )}${field("Required reason", "reason", "", "text", 'required minlength="3" maxlength="300"')}`,
+          `data-id="${id}"`,
+        );
+      } else if (action === "revoke-all") {
+        if (confirm("Log this manager account out on every device?")) {
+          await act("sessions.revoke_all", {});
+          await clearLocalStore();
+          location.href =
+            "/?message=" +
+            encodeURIComponent("All sessions were revoked. Sign in again.");
+        }
+      } else if (action === "refresh-audit") {
+        const result = await api("audit?limit=50");
+        auditEvents = result.events || [];
+        render();
+      } else if (action === "cart-add") {
         const i = db.menu.find((i) => i.id === id && i.available);
         if (!i) throw new Error("Item is no longer available.");
         const line = cart.find((i) => i.id === id);
@@ -1390,7 +1550,26 @@
           staffId: id,
           amount: Number(p.amount),
         });
-      else if (type === "settings")
+      else if (type === "payment-correction")
+        await act("sale.reverse", {
+          id,
+          type: p.type,
+          reason: p.reason,
+        });
+      else if (type === "manager-password") {
+        if (p.newPassword === p.currentPassword)
+          throw new Error(
+            "Choose a new password different from the current password.",
+          );
+        await act("account.password", {
+          currentPassword: p.currentPassword,
+          newPassword: p.newPassword,
+        });
+        await clearLocalStore();
+        location.href =
+          "/?message=" +
+          encodeURIComponent("Password changed. Sign in again on this device.");
+      } else if (type === "settings")
         await act("settings.save", {
           ...p,
           open: p.open === "true",
@@ -1460,8 +1639,20 @@
         if (busy) return;
         const started = generation;
         try {
-          await syncOfflineActions();
-          const fresh = await api("state");
+          const replayed = await syncOfflineActions();
+          let fresh;
+          try {
+            const version = await api("version");
+            if (!replayed && version.stateVersion === db.stateVersion) {
+              online = true;
+              if (renderedDay !== today()) render();
+              return;
+            }
+            fresh = await api("state");
+          } catch {
+            // Older/local backends and transient version checks retain the proven full-state poll.
+            fresh = await api("state");
+          }
           if (started !== generation || busy) return;
           // Alerts must arrive even while staff type an order or keep a bill open.
           syncOrderAlerts(fresh);

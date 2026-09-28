@@ -7,7 +7,9 @@ import { once } from "node:events";
 
 test.describe.configure({ mode: "serial" });
 
-test("Android reopens saved workspace with cloud requests blocked", async ({ page }) => {
+test("Android reopens saved workspace with cloud requests blocked", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "onLine", { get: () => false });
     const saved = {
@@ -17,19 +19,28 @@ test("Android reopens saved workspace with cloud requests blocked", async ({ pag
     };
     window.Capacitor = {
       isNativePlatform: () => true,
-      Plugins: { CapacitorSQLite: {
-        createConnection: async () => {},
-        open: async () => {},
-        execute: async () => {},
-        query: async ({ statement }) => ({ values: statement.includes("state_cache") ? [{ body: JSON.stringify(saved) }] : [] }),
-      } },
+      Plugins: {
+        CapacitorSQLite: {
+          createConnection: async () => {},
+          open: async () => {},
+          execute: async () => {},
+          query: async ({ statement }) => ({
+            values: statement.includes("state_cache")
+              ? [{ body: JSON.stringify(saved) }]
+              : [],
+          }),
+        },
+      },
     };
   });
   let cloudRequests = 0;
-  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", async route => {
-    cloudRequests++;
-    await route.abort("internetdisconnected");
-  });
+  await page.route(
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
+    async (route) => {
+      cloudRequests++;
+      await route.abort("internetdisconnected");
+    },
+  );
   await page.goto("/");
   await expect(page).toHaveURL(/kitchen\.html/);
   await expect(page.locator(".profile")).toContainText("Offline Kitchen");
@@ -39,40 +50,75 @@ test("Android reopens saved workspace with cloud requests blocked", async ({ pag
   expect(cloudRequests).toBe(0);
 });
 
-test("Android saves a food order locally when fetch fails", async ({ page }) => {
+test("Android saves a food order locally when fetch fails", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     const initial = {
       user: { id: "offline-waiter", name: "Offline Waiter", role: "waiter" },
       settings: { name: "Offline Restaurant", open: true, taxRate: 13 },
       tables: [{ n: 1, seats: 4, status: "available" }],
-      menu: [{ id: "momo", name: "Buff Momo", category: "Momo", price: 200, available: true }],
+      menu: [
+        {
+          id: "momo",
+          name: "Buff Momo",
+          category: "Momo",
+          price: 200,
+          available: true,
+        },
+      ],
       orders: [],
     };
-    window.Capacitor = { isNativePlatform: () => true, Plugins: { CapacitorSQLite: {
-      createConnection: async () => {}, open: async () => {},
-      execute: async ({ statements }) => {
-        // Model Android's native batch delimiter and single-statement execution.
-        for (const sql of statements.split(";\n")) {
-          if (/^CREATE TABLE IF NOT EXISTS outbox/.test(sql.trim()))
-            localStorage.setItem("test-outbox-created", "true");
-        }
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        CapacitorSQLite: {
+          createConnection: async () => {},
+          open: async () => {},
+          execute: async ({ statements }) => {
+            // Model Android's native batch delimiter and single-statement execution.
+            for (const sql of statements.split(";\n")) {
+              if (/^CREATE TABLE IF NOT EXISTS outbox/.test(sql.trim()))
+                localStorage.setItem("test-outbox-created", "true");
+            }
+          },
+          query: async ({ statement }) => ({
+            values: statement.includes("state_cache")
+              ? [
+                  {
+                    body:
+                      localStorage.getItem("test-state") ||
+                      JSON.stringify(initial),
+                  },
+                ]
+              : JSON.parse(localStorage.getItem("test-outbox") || "[]"),
+          }),
+          run: async ({ statement, values }) => {
+            if (statement.includes("state_cache"))
+              localStorage.setItem("test-state", values[0]);
+            if (statement.includes("INSERT OR IGNORE INTO outbox")) {
+              if (!localStorage.getItem("test-outbox-created"))
+                throw new Error("Run: no such table: outbox");
+              const rows = JSON.parse(
+                localStorage.getItem("test-outbox") || "[]",
+              );
+              rows.push({
+                id: values[0],
+                action: values[1],
+                payload: values[2],
+                createdAt: values[3],
+              });
+              localStorage.setItem("test-outbox", JSON.stringify(rows));
+            }
+          },
+        },
       },
-      query: async ({ statement }) => ({ values: statement.includes("state_cache")
-        ? [{ body: localStorage.getItem("test-state") || JSON.stringify(initial) }]
-        : JSON.parse(localStorage.getItem("test-outbox") || "[]") }),
-      run: async ({ statement, values }) => {
-        if (statement.includes("state_cache")) localStorage.setItem("test-state", values[0]);
-        if (statement.includes("INSERT OR IGNORE INTO outbox")) {
-          if (!localStorage.getItem("test-outbox-created"))
-            throw new Error("Run: no such table: outbox");
-          const rows = JSON.parse(localStorage.getItem("test-outbox") || "[]");
-          rows.push({ id: values[0], action: values[1], payload: values[2], createdAt: values[3] });
-          localStorage.setItem("test-outbox", JSON.stringify(rows));
-        }
-      },
-    } } };
+    };
   });
-  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", route => route.abort("internetdisconnected"));
+  await page.route(
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
+    (route) => route.abort("internetdisconnected"),
+  );
   await page.goto("/");
   await page.getByRole("button", { name: "Open table" }).click();
   await page.getByRole("button", { name: "Buff Momo Momo" }).click();
@@ -121,10 +167,10 @@ test("Android shows a download notice when a newer app version is available", as
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 6,
-            versionName: "1.5",
+            versionCode: 7,
+            versionName: "1.6",
             downloadUrl:
-              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk?v=1.5",
+              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.6",
             releaseNotes: "A newer test release.",
           }),
         });
@@ -133,11 +179,10 @@ test("Android shows a download notice when a newer app version is available", as
   );
   await page.goto("/");
   const notice = page.locator(".app-update");
-  await expect(notice).toContainText("Sajilo 1.5 is available");
-  await expect(notice.getByRole("link", { name: "Download update" })).toHaveAttribute(
-    "href",
-    /app-debug\.apk\?v=1\.5$/,
-  );
+  await expect(notice).toContainText("Sajilo 1.6 is available");
+  await expect(
+    notice.getByRole("link", { name: "Download update" }),
+  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.6$/);
   await notice.getByRole("button", { name: "Later" }).click();
   await expect(notice).toHaveCount(0);
 });
@@ -201,6 +246,11 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
     await expect(page.getByRole("button", { name, exact: true })).toHaveClass(
       "selected",
     );
+    const box = await page
+      .getByRole("button", { name, exact: true })
+      .boundingBox();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
   }
   await page.getByRole("button", { name: "Tables", exact: true }).click();
   await page.getByRole("button", { name: "+ Add table" }).click();
@@ -379,6 +429,15 @@ test("manager and waiter: live service, reports, payroll, settings and responsiv
     ).toBe(true);
   }
   await page.getByRole("button", { name: "Overview", exact: true }).click();
+  for (const width of [320, 375, 390, 414, 768, 1024, 1366, 1920]) {
+    await page.setViewportSize({ width, height: width < 600 ? 844 : 1000 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
     path: testInfo.outputPath("manager-mobile.png"),
     fullPage: true,
@@ -398,12 +457,19 @@ test("manager and waiter receive new, ready and served notifications", async ({
     },
   );
   expect(login.ok()).toBe(true);
+  let mutationCounter = 1;
   async function action(action, payload) {
     if (action === "staff.save" && payload.password)
       payload = { ...payload, managerPassword: "manager-ui-test-password" };
     const response = await managerContext.request.post(
       "http://127.0.0.1:3138/api/action",
-      { data: { action, payload } },
+      {
+        data: {
+          action,
+          payload,
+          mutationId: (mutationCounter++).toString(16).padStart(32, "0"),
+        },
+      },
     );
     expect(response.ok()).toBe(true);
     return response.json();
@@ -468,7 +534,6 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(
     kitchen.getByRole("heading", { name: "Kitchen orders", exact: true }),
   ).toBeVisible();
-  await kitchen.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(kitchen.locator(".order-alert")).toHaveCount(0);
   await kitchen
     .locator(".korder")
@@ -482,7 +547,6 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(waiter.getByRole("searchbox")).toHaveValue("Momo");
   await expect(waiter.getByRole("searchbox")).toBeFocused();
   await expect(kitchen.locator(".order-alert")).toHaveCount(0);
-  await waiter.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(waiter.locator(".order-alert")).toHaveCount(1);
   await waiter.getByRole("button", { name: "View order", exact: true }).click();
   await expect(
@@ -493,7 +557,6 @@ test("manager and waiter receive new, ready and served notifications", async ({
   ).toContainText("Ready");
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
   await waiter.reload();
-  await waiter.waitForResponse((r) => r.url().endsWith("/api/state"));
   await expect(waiter.locator(".order-alert")).toHaveCount(0);
   await waiter
     .locator(".korder")
@@ -501,7 +564,9 @@ test("manager and waiter receive new, ready and served notifications", async ({
     .getByRole("button", { name: "Mark served" })
     .click();
   await action("sale.pay", { table: 2, method: "Cash", expectedTotal: 452 });
-  await waiter.getByRole("button", { name: "Order history", exact: true }).click();
+  await waiter
+    .getByRole("button", { name: "Order history", exact: true })
+    .click();
   await expect(
     waiter.getByRole("heading", { name: "Order history", level: 1 }),
   ).toBeVisible();
@@ -518,7 +583,9 @@ test("manager and waiter receive new, ready and served notifications", async ({
   const cancelledRow = waiter
     .locator(".sale-row")
     .filter({ hasText: state.orders[0].id.slice(0, 6) });
-  await cancelledRow.getByRole("button", { name: "Cancel", exact: true }).click();
+  await cancelledRow
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   await expect(cancelledRow).toContainText("Cancelled");
   await expect(kitchen.locator(".order-alert")).toHaveCount(0, {
     timeout: 10000,
