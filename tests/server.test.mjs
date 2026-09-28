@@ -96,6 +96,9 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   assert.equal((await fetch(base + "/data/sajilo.sqlite")).status, 404);
   assert.equal((await fetch(base + "/terms.html")).status, 200);
   assert.equal((await fetch(base + "/privacy.html")).status, 200);
+  const release = await (await fetch(base + "/app-version.json")).json();
+  assert.equal(release.versionCode, 5);
+  assert.equal(release.versionName, "1.4");
   const state = (await request("state")).data;
   assert.equal(state.sales.length, 0);
   assert.equal(state.orders.length, 0);

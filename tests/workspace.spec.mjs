@@ -89,6 +89,59 @@ test("Android saves a food order locally when fetch fails", async ({ page }) => 
   await expect(page.locator(".profile")).toContainText("Offline Waiter");
 });
 
+test("Android shows a download notice when a newer app version is available", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const saved = {
+      user: { id: "update-test", name: "Update Kitchen", role: "kitchen" },
+      settings: { name: "Offline Restaurant", open: true, taxRate: 13 },
+      orders: [],
+    };
+    window.Capacitor = {
+      isNativePlatform: () => true,
+      Plugins: {
+        CapacitorSQLite: {
+          createConnection: async () => {},
+          open: async () => {},
+          execute: async () => {},
+          query: async ({ statement }) => ({
+            values: statement.includes("state_cache")
+              ? [{ body: JSON.stringify(saved) }]
+              : [],
+          }),
+        },
+      },
+    };
+  });
+  await page.route(
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
+    async (route) => {
+      if (new URL(route.request().url()).pathname === "/app-version.json")
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({
+            versionCode: 6,
+            versionName: "1.5",
+            downloadUrl:
+              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk?v=1.5",
+            releaseNotes: "A newer test release.",
+          }),
+        });
+      else await route.abort("internetdisconnected");
+    },
+  );
+  await page.goto("/");
+  const notice = page.locator(".app-update");
+  await expect(notice).toContainText("Sajilo 1.5 is available");
+  await expect(notice.getByRole("link", { name: "Download update" })).toHaveAttribute(
+    "href",
+    /app-debug\.apk\?v=1\.5$/,
+  );
+  await notice.getByRole("button", { name: "Later" }).click();
+  await expect(notice).toHaveCount(0);
+});
+
 let server, dataDir;
 test.beforeAll(async () => {
   dataDir = mkdtempSync(join(tmpdir(), "sajilo-ui-"));

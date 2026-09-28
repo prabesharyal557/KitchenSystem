@@ -605,6 +605,38 @@
   }
   const button = (label, action, extra = "", light = false) =>
     `<button type="button" class="button ${light ? "light" : ""}" data-action="${action}" ${extra}>${label}</button>`;
+  function showAppUpdate(release) {
+    document.querySelector(".app-update")?.remove();
+    const notice = document.createElement("section");
+    notice.className = "app-update";
+    notice.setAttribute("role", "alert");
+    notice.innerHTML = `<div><strong>Sajilo ${esc(release.versionName)} is available</strong><span>${esc(release.releaseNotes || "A new app update is ready.")}</span><small>Download it, open the APK, then choose Update. Your restaurant data will remain saved.</small></div><div class="actions"><a class="button" href="${esc(release.downloadUrl)}" target="_blank" rel="noopener">Download update</a>${button("Later", "dismiss-update", "", true)}</div>`;
+    document.body.append(notice);
+  }
+  async function checkForAppUpdate() {
+    if (!isAndroidApp || navigator.onLine === false) return;
+    try {
+      const stamp = Date.now();
+      const [installedResponse, latestResponse] = await Promise.all([
+        fetch(`./app-version.json?installed=${stamp}`, { cache: "no-store" }),
+        fetch(`${cloudServer}/app-version.json?latest=${stamp}`, {
+          cache: "no-store",
+        }),
+      ]);
+      if (!installedResponse.ok || !latestResponse.ok) return;
+      const [installed, latest] = await Promise.all([
+        installedResponse.json(),
+        latestResponse.json(),
+      ]);
+      if (
+        Number.isInteger(installed.versionCode) &&
+        Number.isInteger(latest.versionCode) &&
+        latest.versionCode > installed.versionCode &&
+        typeof latest.downloadUrl === "string"
+      )
+        showAppUpdate(latest);
+    } catch {}
+  }
   function field(label, name, value = "", type = "text", attrs = "") {
     return `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
   }
@@ -1139,6 +1171,9 @@
       if (action === "enable-alerts") await enableOrderAlerts();
       else if (action === "alert-dismiss") dismissOrderAlert(el.dataset.key);
       else if (action === "alert-view") openOrderAlert(el.dataset.key);
+      else if (action === "dismiss-update") {
+        document.querySelector(".app-update")?.remove();
+      }
       else if (action === "navigate") navigate(el.dataset.view);
       else if (action === "retry-startup") location.reload();
       else if (action === "logout") {
@@ -1373,6 +1408,10 @@
   });
   async function init() {
     try {
+      if (isAndroidApp) {
+        void checkForAppUpdate();
+        setInterval(checkForAppUpdate, 6 * 60 * 60 * 1000);
+      }
       offlineShellReady = await prepareOfflineShell();
       await initLocalStore();
       const savedWorkspace = isOfflineClient ? await readLocalState() : null;
@@ -1391,7 +1430,7 @@
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isAndroidApp ? '<div class="ios-install"><b>Android v1.3</b><span>Online and offline mode</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${isAndroidApp ? '<div class="ios-install"><b>Android app</b><span>Online, offline and update notices</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
       // Open saved work immediately, even when a network request would hang.
@@ -1461,6 +1500,7 @@
     }
   }
   window.addEventListener("online", () => {
+    void checkForAppUpdate();
     if (document.querySelector(".startup-error")) location.reload();
   });
   init();

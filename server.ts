@@ -649,6 +649,7 @@ const assets: Record<string, string> = {
   "/terms.html": "terms.html",
   "/privacy.html": "privacy.html",
   "/app.js": "app.js",
+  "/app-version.json": "app-version.json",
   "/sw.js": "sw.js",
   "/manifest.webmanifest": "manifest.webmanifest",
   "/style.css": "style.css",
@@ -659,6 +660,7 @@ const assets: Record<string, string> = {
 const mime: Record<string, string> = {
   html: "text/html",
   js: "text/javascript",
+  json: "application/json",
   css: "text/css",
   svg: "image/svg+xml",
   png: "image/png",
@@ -687,7 +689,7 @@ createServer(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://sajilo-restaurant.aryalprabesh300.workers.dev; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   );
   try {
     const path = new URL(req.url || "/", "http://localhost").pathname;

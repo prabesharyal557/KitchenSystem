@@ -11,6 +11,7 @@ for (const file of [
   "terms.html",
   "privacy.html",
   "app.js",
+  "app-version.json",
   "sw.js",
   "manifest.webmanifest",
   "style.css",

@@ -45,6 +45,8 @@ To use several devices on the same trusted Wi-Fi/LAN, stop the existing server w
 
 Run `npm run android:debug` with JDK 21 to create `android/app/build/outputs/apk/debug/app-debug.apk`. The Android screens are bundled inside the APK so the app can always start without internet. When online, it connects directly to the Cloudflare API; a restaurant computer does not need to remain running.
 
+Android releases use `app-version.json` as the update manifest. The installed app compares its bundled copy with the current Cloudflare copy at startup, when connectivity returns, and every six hours. When publishing a release, increase `versionCode` and `versionName` in both `app-version.json` and `android/app/build.gradle`, update the release notes, rebuild the APK, copy it to `downloads/Sajilo-Restaurant.apk`, and deploy. Users then receive an in-app download notice; Android asks them to approve installation over the existing app.
+
 Download the published APK from <https://sajilo-restaurant.aryalprabesh300.workers.dev/download/app-debug.apk>.
 
 On iPhone or iPad, open <https://sajilo-restaurant.aryalprabesh300.workers.dev> in Safari, tap **Share**, choose **Add to Home Screen**, and open Sajilo from the new home-screen icon. iOS cannot install Android APK files. The home-screen app receives website updates automatically and uses IndexedDB for the same offline order queue.

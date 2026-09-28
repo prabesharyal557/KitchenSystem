@@ -444,10 +444,10 @@ export default {
     const response = new Response(asset.body, asset);
     if (
       url.pathname === "/" ||
-      /\.(?:html|js|css)$/.test(url.pathname)
+      /\.(?:html|js|json|css)$/.test(url.pathname)
     )
       response.headers.set("Cache-Control", "no-cache, must-revalidate");
     if (url.pathname === "/download/app-debug.apk" && response.ok) response.headers.set("Content-Disposition", 'attachment; filename="Sajilo-Restaurant.apk"');
-    return secureHeaders(response);
+    return secureHeaders(cors(request, response));
   },
 } satisfies ExportedHandler<Env>;
