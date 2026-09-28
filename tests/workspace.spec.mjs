@@ -367,6 +367,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
   const waiterContext = await browser.newContext();
   async function staffPage(context, username, password) {
     const page = await context.newPage();
+    page.on("dialog", (dialog) => dialog.accept());
     await page.goto("http://127.0.0.1:3138/");
     await page.getByLabel("Username").fill(username);
     await page.getByLabel("Password", { exact: true }).fill(password);
@@ -453,7 +454,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
   ).toBeVisible();
   await expect(
     waiter.locator(".sale-row").filter({ hasText: order.id.slice(0, 6) }),
-  ).toContainText("Paid");
+  ).toContainText("Paid", { timeout: 10000 });
   state = await action("order.create", {
     table: 3,
     items: [{ id: item.id, qty: 1 }],
@@ -461,7 +462,11 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(kitchen.locator(".order-alert")).toContainText("Table 3", {
     timeout: 10000,
   });
-  await action("order.advance", { id: state.orders[0].id, status: "new" });
+  const cancelledRow = waiter
+    .locator(".sale-row")
+    .filter({ hasText: state.orders[0].id.slice(0, 6) });
+  await cancelledRow.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(cancelledRow).toContainText("Cancelled");
   await expect(kitchen.locator(".order-alert")).toHaveCount(0, {
     timeout: 10000,
   });

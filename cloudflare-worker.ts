@@ -196,9 +196,19 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
     if (order.status === "served") { order.servedAt = now(); order.servedById = user.id; }
     return;
   }
+  if (action === "order.cancel") {
+    requireThat(["manager", "waiter"].includes(user.role), "Manager or waiter access required.", 403);
+    const order = state.orders.find((entry) => entry.id === payload.id && !entry.paid);
+    requireThat(order && ["new", "preparing", "ready", "served"].includes(order.status), "Order cannot be cancelled.");
+    order.status = "cancelled";
+    const table = state.tables.find((entry) => entry.n === order.table);
+    const tableStillActive = state.orders.some((entry) => entry.table === order.table && !entry.paid && ["new", "preparing", "ready", "served"].includes(entry.status));
+    if (table && !tableStillActive) table.status = "available";
+    return;
+  }
   if (action === "sale.pay") {
     requireThat(["manager", "waiter"].includes(user.role), "Waiter access required.", 403);
-    const orders = state.orders.filter((order) => order.table === payload.table && !order.paid);
+    const orders = state.orders.filter((order) => order.table === payload.table && !order.paid && order.status !== "cancelled");
     requireThat(orders.length, "This table has no unpaid orders.");
     requireThat(orders.every((order) => order.status === "served"), "Mark all orders served before payment.");
     requireThat(["Cash", "QR", "Card"].includes(payload.method), "Choose a payment method.");
@@ -224,7 +234,7 @@ function mutate(state: State, user: Staff, action: string, payload: any, effects
   } else if (action === "table.update" || action === "table.delete") {
     const table = state.tables.find((entry) => entry.n === payload.n);
     requireThat(table, "Table not found.");
-    const occupied = state.orders.some((order) => order.table === payload.n && !order.paid);
+    const occupied = state.orders.some((order) => order.table === payload.n && !order.paid && order.status !== "cancelled");
     requireThat(!occupied || (action === "table.update" && payload.status === "busy"), "Settle the outstanding bill before freeing or deleting this table.");
     if (action === "table.delete") state.tables = state.tables.filter((entry) => entry.n !== payload.n);
     else { requireThat(["available", "busy", "pending"].includes(payload.status), "Invalid table status."); table.status = payload.status; }

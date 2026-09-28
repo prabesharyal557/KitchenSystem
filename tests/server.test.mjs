@@ -360,6 +360,59 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
   });
   assert.equal((await request("state")).data.sales[0].taxRate, 13);
 });
+test("manager and waiter can cancel an unpaid order and free its table", async () => {
+  const state = (await request("state")).data;
+  const item = state.menu.find((entry) => entry.available);
+  const created = await action(
+    "order.create",
+    { table: 2, items: [{ id: item.id, qty: 1 }] },
+    waiterCookie,
+  );
+  const cancelledOrderId = created.data.orders[0].id;
+  assert.equal(
+    (
+      await action(
+        "order.cancel",
+        { id: cancelledOrderId },
+        kitchenCookie,
+      )
+    ).status,
+    403,
+  );
+  const cancelled = await action(
+    "order.cancel",
+    { id: cancelledOrderId },
+    waiterCookie,
+  );
+  assert.equal(
+    cancelled.data.orders.find((order) => order.id === cancelledOrderId).status,
+    "cancelled",
+  );
+  assert.equal(
+    cancelled.data.tables.find((table) => table.n === 2).status,
+    "available",
+  );
+  assert.equal(
+    (
+      await action(
+        "order.cancel",
+        { id: cancelledOrderId },
+        waiterCookie,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await action(
+        "sale.pay",
+        { table: 2, method: "Cash", expectedTotal: 0 },
+        waiterCookie,
+      )
+    ).status,
+    400,
+  );
+});
 test("salary and mid-month advances retain amount, month and notes", async () => {
   assert.equal(
     (

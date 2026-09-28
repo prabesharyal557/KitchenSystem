@@ -434,6 +434,25 @@
         order.servedAt = new Date().toISOString();
         order.servedById = state.user.id;
       } else throw new Error("This account cannot make that offline update.");
+    } else if (action === "order.cancel") {
+      if (!["manager", "waiter"].includes(state.user.role))
+        throw new Error("This account cannot cancel orders.");
+      const order = state.orders.find(
+        (entry) =>
+          entry.id === payload.id &&
+          !entry.paid &&
+          ["new", "preparing", "ready", "served"].includes(entry.status),
+      );
+      if (!order) throw new Error("This order cannot be cancelled offline.");
+      order.status = "cancelled";
+      const table = state.tables?.find((entry) => entry.n === order.table);
+      const tableStillActive = state.orders.some(
+        (entry) =>
+          entry.table === order.table &&
+          !entry.paid &&
+          ["new", "preparing", "ready", "served"].includes(entry.status),
+      );
+      if (table && !tableStillActive) table.status = "available";
     } else {
       throw new Error(
         "This action requires internet. Orders and service status can be saved offline.",
@@ -688,7 +707,9 @@
   }
   function dashboard() {
     const rows = salesFor(today()),
-      active = db.orders.filter((o) => !o.paid && o.status !== "served");
+      active = db.orders.filter(
+        (o) => !o.paid && !["served", "cancelled"].includes(o.status),
+      );
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(today() + "T00:00:00Z");
       d.setUTCDate(d.getUTCDate() - 6 + i);
@@ -899,7 +920,7 @@
               '</span></div><div class="stage-tickets">' +
               (rows
                 .map((o) => {
-                  const action =
+                  const primaryAction =
                     status === "new"
                       ? button(
                           "Mark ready to serve →",
@@ -917,6 +938,16 @@
                             'data-id="' + o.id + '" data-status="ready"',
                           )
                         : '<div class="pickup-note">✓ Waiter notified · Awaiting service</div>';
+                  const cancelAction =
+                    workspace === "kitchen"
+                      ? ""
+                      : button(
+                          "Cancel order",
+                          "cancel-order",
+                          'data-id="' + o.id + '"',
+                          true,
+                        );
+                  const action = `<div class="stack">${primaryAction}${cancelAction}</div>`;
                   return (
                     '<article class="korder ' +
                     status +
@@ -979,7 +1010,7 @@
         db.orders
           .map(
             (o) =>
-              `<div class="sale-row"><div><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small></div><span class="status">${o.paid ? "Paid" : o.status}</span></div>`,
+              `<div class="sale-row"><div><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small></div><div class="actions"><span class="status">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && ["new", "preparing", "ready", "served"].includes(o.status) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`,
           )
           .join("") || empty("No orders yet."),
       ),
@@ -1017,7 +1048,7 @@
   }
   function bill(n, selectedMethod = "") {
     const items = db.orders
-      .filter((o) => o.table === n && !o.paid)
+      .filter((o) => o.table === n && !o.paid && o.status !== "cancelled")
       .flatMap((o) => o.items);
     const subtotal =
         Math.round(items.reduce((s, i) => s + i.price * i.qty, 0) * 100) / 100,
@@ -1208,6 +1239,16 @@
         );
       else if (action === "advance")
         await act("order.advance", { id, status: el.dataset.status });
+      else if (action === "cancel-order") {
+        const order = db.orders.find((entry) => entry.id === id);
+        if (
+          order &&
+          confirm(
+            `Cancel order #${order.id.slice(0, 6)} for Table ${order.table}? The ticket will remain in Order History as cancelled.`,
+          )
+        )
+          await act("order.cancel", { id });
+      }
       else if (action === "cart-add") {
         const i = db.menu.find((i) => i.id === id && i.available);
         if (!i) throw new Error("Item is no longer available.");

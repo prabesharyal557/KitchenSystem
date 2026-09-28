@@ -437,13 +437,37 @@ function mutate(state: State, u: Staff, action: string, p: any) {
     }
     return;
   }
+  if (action === "order.cancel") {
+    requireThat(
+      ["manager", "waiter"].includes(u.role),
+      "Manager or waiter access required.",
+      403,
+    );
+    const order = state.orders.find((o) => o.id === p.id && !o.paid);
+    requireThat(
+      order && ["new", "preparing", "ready", "served"].includes(order.status),
+      "Order cannot be cancelled.",
+    );
+    order!.status = "cancelled";
+    const table = state.tables.find((t) => t.n === order!.table);
+    const tableStillActive = state.orders.some(
+      (o) =>
+        o.table === order!.table &&
+        !o.paid &&
+        ["new", "preparing", "ready", "served"].includes(o.status),
+    );
+    if (table && !tableStillActive) table.status = "available";
+    return;
+  }
   if (action === "sale.pay") {
     requireThat(
       ["manager", "waiter"].includes(u.role),
       "Waiter access required.",
       403,
     );
-    const orders = state.orders.filter((o) => o.table === p.table && !o.paid);
+    const orders = state.orders.filter(
+      (o) => o.table === p.table && !o.paid && o.status !== "cancelled",
+    );
     requireThat(orders.length, "This table has no unpaid orders.");
     requireThat(
       orders.every((o) => o.status === "served"),
@@ -495,7 +519,9 @@ function mutate(state: State, u: Staff, action: string, p: any) {
   } else if (action === "table.update" || action === "table.delete") {
     const t = state.tables.find((t) => t.n === p.n);
     requireThat(t, "Table not found.");
-    const occupied = state.orders.some((o) => o.table === p.n && !o.paid);
+    const occupied = state.orders.some(
+      (o) => o.table === p.n && !o.paid && o.status !== "cancelled",
+    );
     requireThat(
       !occupied || (action === "table.update" && p.status === "busy"),
       "Settle the outstanding bill before freeing or deleting this table.",
