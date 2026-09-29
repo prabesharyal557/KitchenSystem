@@ -563,7 +563,12 @@ test("manager and waiter receive new, ready and served notifications", async ({
     .filter({ hasText: order.id.slice(0, 6) })
     .getByRole("button", { name: "Mark served" })
     .click();
+  await expect(
+    waiter.locator(".korder").filter({ hasText: order.id.slice(0, 6) }),
+  ).toHaveCount(0);
+  await waiter.waitForTimeout(100);
   await action("sale.pay", { table: 2, method: "Cash", expectedTotal: 452 });
+  await waiter.waitForTimeout(100);
   await waiter
     .getByRole("button", { name: "Order history", exact: true })
     .click();
@@ -586,7 +591,22 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await cancelledRow
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+  const cancellationDialog = waiter.getByRole("dialog");
+  await expect(
+    cancellationDialog.getByRole("heading", { name: /Cancel order/ }),
+  ).toBeVisible();
+  await cancellationDialog
+    .getByLabel("Cancellation reason")
+    .selectOption("Customer changed mind");
+  await cancellationDialog
+    .getByLabel("Additional details")
+    .fill("Guest requested cancellation");
+  await cancellationDialog
+    .getByRole("button", { name: "Confirm cancellation" })
+    .click();
   await expect(cancelledRow).toContainText("Cancelled");
+  await expect(cancelledRow).toContainText("Customer changed mind");
+  await expect(cancelledRow).toContainText("Ram Poudel");
   await expect(kitchen.locator(".order-alert")).toHaveCount(0, {
     timeout: 10000,
   });

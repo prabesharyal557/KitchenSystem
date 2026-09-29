@@ -358,13 +358,30 @@ test("Worker/D1 action contract preserves the complete POS flow and management a
   response = await act(
     waiter,
     "order.cancel",
-    { id: cancelledId },
+    { id: cancelledId, reason: "" },
     mutation(16),
+  );
+  assert.equal(response.status, 400);
+  response = await act(
+    waiter,
+    "order.cancel",
+    { id: cancelledId, reason: "Ordered by mistake" },
+    mutation(17),
   );
   assert.equal(response.status, 200, JSON.stringify(response.data));
   assert.equal(
     response.data.orders.find((entry) => entry.id === cancelledId).status,
     "cancelled",
+  );
+  assert.equal(
+    response.data.orders.find((entry) => entry.id === cancelledId)
+      .cancellationReason,
+    "Ordered by mistake",
+  );
+  assert.equal(
+    response.data.orders.find((entry) => entry.id === cancelledId)
+      .cancelledById,
+    "waiter-1",
   );
   assert.equal(
     response.data.tables.find((table) => table.n === 1).status,
@@ -374,7 +391,7 @@ test("Worker/D1 action contract preserves the complete POS flow and management a
     waiter,
     "sale.pay",
     { table: 1, method: "Cash", expectedTotal: 220 },
-    mutation(17),
+    mutation(18),
   );
   assert.equal(response.status, 400);
 
@@ -406,7 +423,7 @@ test("Worker/D1 action contract preserves the complete POS flow and management a
       type: "void",
       reason: "Contract correction",
     },
-    mutation(18),
+    mutation(20),
   );
   assert.equal(response.status, 200, JSON.stringify(response.data));
   assert.equal(response.data.sales[0].status, "voided");

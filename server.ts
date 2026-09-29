@@ -548,10 +548,11 @@ function mutate(state: State, u: Staff, action: string, p: any) {
       "A manager must cancel an order that is ready or served.",
       403,
     );
-    const reason =
-      typeof p.reason === "string" ? p.reason.trim().slice(0, 300) : "";
-    if (u.role === "manager" && ["ready", "served"].includes(order!.status))
-      requireThat(reason.length >= 3, "Enter a cancellation reason.");
+    const reason = text(p.reason, "Cancellation reason", 300);
+    requireThat(
+      reason.length >= 3,
+      "Cancellation reason must contain at least 3 characters.",
+    );
     if (p.expectedVersion !== undefined)
       requireThat(
         order!.version === p.expectedVersion,
@@ -561,8 +562,7 @@ function mutate(state: State, u: Staff, action: string, p: any) {
     order!.status = "cancelled";
     order!.version += 1;
     order!.updatedAt = now();
-    order!.cancellationReason =
-      reason || "Cancelled before preparation completed";
+    order!.cancellationReason = reason;
     order!.cancelledAt = order!.updatedAt;
     order!.cancelledById = u.id;
     const table = state.tables.find((t) => t.n === order!.table);

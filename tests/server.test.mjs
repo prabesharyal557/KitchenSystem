@@ -365,7 +365,7 @@ test("order progression, stale actions, bill tax and exactly-once payment", asyn
   });
   assert.equal((await request("state")).data.sales[0].taxRate, 13);
 });
-test("manager and waiter can cancel an unpaid order and free its table", async () => {
+test("cancellation requires a reason, preserves attribution, and frees only an inactive table", async () => {
   const state = (await request("state")).data;
   const item = state.menu.find((entry) => entry.available);
   const created = await action(
@@ -375,27 +375,92 @@ test("manager and waiter can cancel an unpaid order and free its table", async (
   );
   const cancelledOrderId = created.data.orders[0].id;
   assert.equal(
-    (await action("order.cancel", { id: cancelledOrderId }, kitchenCookie))
-      .status,
+    (
+      await action(
+        "order.cancel",
+        { id: cancelledOrderId, reason: "" },
+        waiterCookie,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await action(
+        "order.cancel",
+        { id: cancelledOrderId, reason: "Customer changed mind" },
+        kitchenCookie,
+      )
+    ).status,
     403,
   );
-  const cancelled = await action(
-    "order.cancel",
-    { id: cancelledOrderId },
+  const second = await action(
+    "order.create",
+    { table: 2, items: [{ id: item.id, qty: 1 }] },
     waiterCookie,
   );
-  assert.equal(
-    cancelled.data.orders.find((order) => order.id === cancelledOrderId).status,
-    "cancelled",
+  const secondOrderId = second.data.orders.find(
+    (order) => order.id !== cancelledOrderId && !order.paid,
+  ).id;
+  const cancelled = await action(
+    "order.cancel",
+    { id: cancelledOrderId, reason: "Customer changed mind" },
+    waiterCookie,
   );
+  const cancelledOrder = cancelled.data.orders.find(
+    (order) => order.id === cancelledOrderId,
+  );
+  assert.equal(cancelledOrder.status, "cancelled");
+  assert.equal(cancelledOrder.cancellationReason, "Customer changed mind");
+  assert.equal(cancelledOrder.cancelledById, cancelled.data.user.id);
+  assert.ok(Date.parse(cancelledOrder.cancelledAt));
   assert.equal(
     cancelled.data.tables.find((table) => table.n === 2).status,
-    "available",
+    "busy",
   );
   assert.equal(
-    (await action("order.cancel", { id: cancelledOrderId }, waiterCookie))
-      .status,
+    (
+      await action(
+        "order.cancel",
+        { id: cancelledOrderId, reason: "Duplicate order" },
+        waiterCookie,
+      )
+    ).status,
     400,
+  );
+  await action(
+    "order.advance",
+    { id: secondOrderId, status: "new" },
+    kitchenCookie,
+  );
+  assert.equal(
+    (
+      await action(
+        "order.cancel",
+        { id: secondOrderId, reason: "Customer changed mind" },
+        waiterCookie,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await action(
+        "order.cancel",
+        { id: secondOrderId, reason: "" },
+        managerCookie,
+      )
+    ).status,
+    400,
+  );
+  const managerCancelled = await action(
+    "order.cancel",
+    { id: secondOrderId, reason: "Guest left before service" },
+    managerCookie,
+  );
+  assert.equal(
+    managerCancelled.data.tables.find((table) => table.n === 2).status,
+    "available",
   );
   assert.equal(
     (

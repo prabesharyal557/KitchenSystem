@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
-  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.5",
-  "releaseNotes": "First production-signed release. Sync pending work first. If Android cannot update the old debug app, uninstall it once and install this release; future updates will install normally."
+  "versionCode": 7,
+  "versionName": "1.6",
+  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.6",
+  "releaseNotes": "Improves order cancellation with required reasons, clear confirmation, staff attribution, conflict protection, and complete history details."
 }

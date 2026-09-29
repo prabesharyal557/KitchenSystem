@@ -1,7 +1,7 @@
 # Sajilo production-readiness report
 
-Date: 2026-09-28
-Production Worker: `3b513dc8-692c-48e5-bd31-c3e10bcb3157`
+Date: 2026-09-29
+Production Worker: `ec1565d8-61d8-4149-82ad-9ebaf85f7f7a`
 
 ## 1. Important files changed
 
@@ -51,9 +51,9 @@ Clients poll `/api/version`; they fetch role state only after its version change
 
 ## 7. Android release
 
-- Version: `1.5` (`versionCode 6`)
+- Version: `1.6` (`versionCode 7`)
 - Artifact: `downloads/Sajilo-Restaurant-release.apk`
-- SHA-256: `ac74426450746d299517619cbe76e82735eba57a26f68689e32e922a6e55ba8f`
+- SHA-256: `efa76f93d82eb699c08895246c7fac9d4c97e3302139b7f3265f12f2b0721fc3`
 - Signature: APK Signature Scheme v2 verified, RSA 4096-bit release key
 - `debuggable` absent/false, R8 minification and resource shrinking enabled, production Worker URL bundled
 - Moving from the previously published debug-signed APK requires a one-time uninstall after all pending offline work has synchronized. Android blocks in-place updates across different signing keys. Later releases update in place when signed with the same protected key.

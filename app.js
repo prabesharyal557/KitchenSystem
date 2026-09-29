@@ -484,14 +484,20 @@
         throw new Error(
           "A manager must cancel an order that is ready or served.",
         );
+      const reason =
+        typeof payload.reason === "string" ? payload.reason.trim() : "";
+      if (reason.length < 3 || reason.length > 300)
+        throw new Error(
+          "Enter a cancellation reason between 3 and 300 characters.",
+        );
+      payload.reason = reason;
       payload.expectedVersion ??= order.version || 1;
       order.status = "cancelled";
       order.version = (order.version || 1) + 1;
       order.updatedAt = new Date().toISOString();
       order.cancelledAt = order.updatedAt;
       order.cancelledById = state.user.id;
-      order.cancellationReason =
-        payload.reason || "Cancelled before preparation completed";
+      order.cancellationReason = reason;
       const table = state.tables?.find((entry) => entry.n === order.table);
       const tableStillActive = state.orders.some(
         (entry) =>
@@ -710,8 +716,11 @@
   function field(label, name, value = "", type = "text", attrs = "") {
     return `<label>${label}<input name="${name}" type="${type}" value="${esc(value)}" ${attrs}></label>`;
   }
-  function select(label, name, options, value) {
-    return `<label>${label}<select name="${name}" aria-label="${esc(label)}">${options
+  function textarea(label, name, value = "", attrs = "") {
+    return `<label>${label}<textarea name="${name}" ${attrs}>${esc(value)}</textarea></label>`;
+  }
+  function select(label, name, options, value, attrs = "") {
+    return `<label>${label}<select name="${name}" aria-label="${esc(label)}" ${attrs}>${options
       .map((o) => {
         const [v, t] = Array.isArray(o) ? o : [o, o];
         return `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(t)}</option>`;
@@ -1151,10 +1160,17 @@
       card(
         "Tickets",
         db.orders
-          .map(
-            (o) =>
-              `<div class="sale-row"><div><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}${o.cancellationReason ? ` · ${esc(o.cancellationReason)}` : ""}</small></div><div class="actions"><span class="status">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && (workspace === "manager" ? ["new", "preparing", "ready", "served"].includes(o.status) : ["new", "preparing"].includes(o.status)) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`,
-          )
+          .map((o) => {
+            const cancelledBy =
+              o.cancelledById === db.user.id
+                ? db.user.name
+                : db.staff?.find((staff) => staff.id === o.cancelledById)?.name;
+            const cancellation =
+              o.status === "cancelled"
+                ? `<small class="cancellation-detail"><b>Reason:</b> ${esc(o.cancellationReason || "Not recorded")} · ${o.cancelledAt ? stamp(o.cancelledAt) : "Time unavailable"}${cancelledBy ? ` · by ${esc(cancelledBy)}` : ""}</small>`
+                : "";
+            return `<div class="sale-row"><div class="grow"><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small>${cancellation}</div><div class="actions"><span class="status ${o.status}">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && (workspace === "manager" ? ["new", "preparing", "ready", "served"].includes(o.status) : ["new", "preparing"].includes(o.status)) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`;
+          })
           .join("") || empty("No orders yet."),
       ),
     );
@@ -1183,10 +1199,50 @@
     document.body.append(d);
     d.showModal();
   }
-  function form(title, type, content, attrs = "", footer = "") {
+  function form(
+    title,
+    type,
+    content,
+    attrs = "",
+    footer = "",
+    submitLabel = "Save",
+  ) {
     modal(
       title,
-      `<form data-form="${type}" ${attrs} class="form-grid">${content}<div class="form-error" role="alert"></div><div class="actions"><button class="button" type="submit">Save</button>${button("Cancel", "close", "", true)}${footer}</div></form>`,
+      `<form data-form="${type}" ${attrs} class="form-grid">${content}<div class="form-error" role="alert"></div><div class="actions"><button class="button ${type === "order-cancel" ? "danger" : ""}" type="submit">${esc(submitLabel)}</button>${button(type === "order-cancel" ? "Go back" : "Cancel", "close", "", true)}${footer}</div></form>`,
+    );
+  }
+  function cancellationForm(order) {
+    const subtotal = order.items.reduce(
+      (total, item) => total + item.price * item.qty,
+      0,
+    );
+    form(
+      `Cancel order #${order.id.slice(0, 6)}`,
+      "order-cancel",
+      `<div class="cancel-summary"><div><span>Table</span><b>${order.table}</b></div><div><span>Status</span><b>${esc(order.status)}</b></div><div><span>Order value</span><b>${money(subtotal)}</b></div></div><div class="notice">This removes the ticket from active service and keeps it permanently in Order History. It cannot be paid after cancellation.</div>${select(
+        "Cancellation reason",
+        "reason",
+        [
+          ["", "Choose a reason"],
+          ["Customer changed mind", "Customer changed mind"],
+          ["Ordered by mistake", "Ordered by mistake"],
+          ["Duplicate order", "Duplicate order"],
+          ["Item unavailable", "Item unavailable"],
+          ["Guest left before service", "Guest left before service"],
+          ["Other", "Other"],
+        ],
+        "",
+        "required",
+      )}${textarea(
+        "Additional details",
+        "details",
+        "",
+        'maxlength="240" rows="3" placeholder="Required when choosing Other"',
+      )}<small>Cancelled by ${esc(db.user.name)}. Ready or served orders require a manager.</small>`,
+      `data-id="${order.id}" data-version="${order.version || 1}"`,
+      "",
+      "Confirm cancellation",
     );
   }
   function bill(n, selectedMethod = "") {
@@ -1276,8 +1332,9 @@
   }
   document.addEventListener("click", async (e) => {
     const el = e.target.closest("[data-action]");
-    if (!el || busy) return;
+    if (!el) return;
     const { action, id } = el.dataset;
+    if (busy && action !== "navigate") return;
     try {
       if (action === "enable-alerts") await enableOrderAlerts();
       else if (action === "retry-sync") {
@@ -1399,23 +1456,7 @@
         });
       else if (action === "cancel-order") {
         const order = db.orders.find((entry) => entry.id === id);
-        if (
-          order &&
-          confirm(
-            `Cancel order #${order.id.slice(0, 6)} for Table ${order.table}? The ticket will remain in Order History as cancelled.`,
-          )
-        )
-          await act("order.cancel", {
-            id,
-            expectedVersion: order.version,
-            reason:
-              workspace === "manager" &&
-              ["ready", "served"].includes(order.status)
-                ? prompt(
-                    "Why is this ready or served order being cancelled?",
-                  ) || ""
-                : "Cancelled before preparation completed",
-          });
+        if (order) cancellationForm(order);
       } else if (action === "payment-correct") {
         const sale = db.sales.find((entry) => entry.id === id);
         form(
@@ -1556,7 +1597,24 @@
           type: p.type,
           reason: p.reason,
         });
-      else if (type === "manager-password") {
+      else if (type === "order-cancel") {
+        const details = String(p.details || "").trim();
+        if (p.reason === "Other" && details.length < 3)
+          throw new Error(
+            "Enter at least 3 characters of cancellation details.",
+          );
+        const reason =
+          p.reason === "Other"
+            ? details
+            : `${p.reason}${details ? ` — ${details}` : ""}`;
+        if (reason.length < 3 || reason.length > 300)
+          throw new Error("Cancellation reason must contain 3–300 characters.");
+        await act("order.cancel", {
+          id,
+          expectedVersion: Number(f.dataset.version),
+          reason,
+        });
+      } else if (type === "manager-password") {
         if (p.newPassword === p.currentPassword)
           throw new Error(
             "Choose a new password different from the current password.",

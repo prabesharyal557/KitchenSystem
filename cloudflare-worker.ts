@@ -830,12 +830,11 @@ function mutate(
       "A manager must cancel an order that is ready or served.",
       403,
     );
-    const reason =
-      typeof payload.reason === "string"
-        ? payload.reason.trim().slice(0, 300)
-        : "";
-    if (user.role === "manager" && ["ready", "served"].includes(order.status))
-      requireThat(reason.length >= 3, "Enter a cancellation reason.");
+    const reason = text(payload.reason, "Cancellation reason", 300);
+    requireThat(
+      reason.length >= 3,
+      "Cancellation reason must contain at least 3 characters.",
+    );
     if (payload.expectedVersion !== undefined)
       requireThat(
         order.version === payload.expectedVersion,
@@ -845,8 +844,7 @@ function mutate(
     order.status = "cancelled";
     order.version += 1;
     order.updatedAt = now();
-    order.cancellationReason =
-      reason || "Cancelled before preparation completed";
+    order.cancellationReason = reason;
     order.cancelledAt = order.updatedAt;
     order.cancelledById = user.id;
     const table = state.tables.find((entry) => entry.n === order.table);
@@ -1361,19 +1359,6 @@ export class RestaurantCoordinator extends DurableObject<Env> {
           requireThat(
             /^[a-f0-9]{32}$/.test(mutationId),
             "Invalid mutation ID.",
-          );
-        if (
-          [
-            "order.create",
-            "order.advance",
-            "order.cancel",
-            "sale.pay",
-            "sale.reverse",
-          ].includes(payload.action)
-        )
-          requireThat(
-            Boolean(mutationId),
-            "A mutation ID is required for order and payment changes.",
           );
         if (
           [

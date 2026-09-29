@@ -21,7 +21,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -744,9 +745,37 @@ select {
   min-height: 41px;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid #a6bd88;
   outline-offset: 1px;
+}
+.button.danger {
+  background: #a33d32;
+}
+.cancel-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.cancel-summary > div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.cancel-summary span,
+.cancel-summary b {
+  display: block;
+}
+.cancel-summary span {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.cancellation-detail {
+  margin-top: 4px;
+  color: #8e3f35;
 }
 .form-error {
   color: #ba4e3e;
@@ -756,7 +785,13 @@ select:focus {
 .form-error:empty {
   display: none;
 }
-.link-button { background: none; color: var(--green); padding: 7px 0 0; font-size: 11px; text-decoration: underline; }
+.link-button {
+  background: none;
+  color: var(--green);
+  padding: 7px 0 0;
+  font-size: 11px;
+  text-decoration: underline;
+}
 .coming-soon {
   background: white;
   border: 1px solid var(--line);
@@ -1091,10 +1126,17 @@ dialog::backdrop {
   display: grid;
   gap: 3px;
 }
-.app-update strong { color: var(--green); }
+.app-update strong {
+  color: var(--green);
+}
 .app-update span,
-.app-update small { color: var(--muted); line-height: 1.45; }
-.app-update .actions { flex-shrink: 0; }
+.app-update small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+.app-update .actions {
+  flex-shrink: 0;
+}
 .order-alerts {
   position: fixed;
   right: 20px;
@@ -1252,7 +1294,9 @@ code {
     align-items: stretch;
     flex-direction: column;
   }
-  .app-update .actions > * { flex: 1; }
+  .app-update .actions > * {
+    flex: 1;
+  }
   .sidebar {
     width: 58px;
     padding: 16px 5px;
