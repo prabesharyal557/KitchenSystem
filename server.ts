@@ -1,3 +1,4 @@
+import { cancelTickets, CancellationError } from "./cancellation.ts";
 import {
   createServer,
   type IncomingMessage,
@@ -252,6 +253,7 @@ if (initialManagerPassword) {
       initialManager.name = initialManagerName;
       initialManager.username = initialManagerUsername;
     }
+    initialManager.mustChangePassword = false;
     db.exec("BEGIN IMMEDIATE");
     try {
       if (passwordChanged)
@@ -417,7 +419,9 @@ function snapshot(state: State, user: Staff) {
       updatedAt: state.updatedAt,
       orders: state.orders
         .filter(
-          (o) => !o.paid && ["new", "preparing", "ready"].includes(o.status),
+          (o) =>
+            !o.paid &&
+            ["new", "preparing", "ready", "cancelled"].includes(o.status),
         )
         .map((o) => ({
           ...o,
@@ -533,46 +537,7 @@ function mutate(state: State, u: Staff, action: string, p: any) {
     return;
   }
   if (action === "order.cancel") {
-    requireThat(
-      ["manager", "waiter"].includes(u.role),
-      "Manager or waiter access required.",
-      403,
-    );
-    const order = state.orders.find((o) => o.id === p.id && !o.paid);
-    requireThat(
-      order && ["new", "preparing", "ready", "served"].includes(order.status),
-      "Order cannot be cancelled.",
-    );
-    requireThat(
-      u.role === "manager" || ["new", "preparing"].includes(order!.status),
-      "A manager must cancel an order that is ready or served.",
-      403,
-    );
-    const reason = text(p.reason, "Cancellation reason", 300);
-    requireThat(
-      reason.length >= 3,
-      "Cancellation reason must contain at least 3 characters.",
-    );
-    if (p.expectedVersion !== undefined)
-      requireThat(
-        order!.version === p.expectedVersion,
-        "This order changed on another device. Refresh before trying again.",
-        409,
-      );
-    order!.status = "cancelled";
-    order!.version += 1;
-    order!.updatedAt = now();
-    order!.cancellationReason = reason;
-    order!.cancelledAt = order!.updatedAt;
-    order!.cancelledById = u.id;
-    const table = state.tables.find((t) => t.n === order!.table);
-    const tableStillActive = state.orders.some(
-      (o) =>
-        o.table === order!.table &&
-        !o.paid &&
-        ["new", "preparing", "ready", "served"].includes(o.status),
-    );
-    if (table && !tableStillActive) table.status = "available";
+    cancelTickets(state, u, p, id);
     return;
   }
   if (action === "sale.pay") {
@@ -1166,7 +1131,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     );
     res.end(readFileSync(join(root, file)));
   } catch (error) {
-    const known = error instanceof HttpError;
+    const known =
+      error instanceof HttpError || error instanceof CancellationError;
     console.error(
       JSON.stringify({
         level: known && error.status < 500 ? "warn" : "error",

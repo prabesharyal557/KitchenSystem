@@ -1,3 +1,4 @@
+import { cancelTickets, CancellationError } from "./cancellation.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
   createHash,
@@ -226,7 +227,8 @@ function snapshot(state: State, user: Staff) {
       orders: state.orders
         .filter(
           (order) =>
-            !order.paid && ["new", "preparing", "ready"].includes(order.status),
+            !order.paid &&
+            ["new", "preparing", "ready", "cancelled"].includes(order.status),
         )
         .map((order) => ({
           ...order,
@@ -813,48 +815,7 @@ function mutate(
     return;
   }
   if (action === "order.cancel") {
-    requireThat(
-      ["manager", "waiter"].includes(user.role),
-      "Manager or waiter access required.",
-      403,
-    );
-    const order = state.orders.find(
-      (entry) => entry.id === payload.id && !entry.paid,
-    );
-    requireThat(
-      order && ["new", "preparing", "ready", "served"].includes(order.status),
-      "Order cannot be cancelled.",
-    );
-    requireThat(
-      user.role === "manager" || ["new", "preparing"].includes(order.status),
-      "A manager must cancel an order that is ready or served.",
-      403,
-    );
-    const reason = text(payload.reason, "Cancellation reason", 300);
-    requireThat(
-      reason.length >= 3,
-      "Cancellation reason must contain at least 3 characters.",
-    );
-    if (payload.expectedVersion !== undefined)
-      requireThat(
-        order.version === payload.expectedVersion,
-        "This order changed on another device. Refresh before trying again.",
-        409,
-      );
-    order.status = "cancelled";
-    order.version += 1;
-    order.updatedAt = now();
-    order.cancellationReason = reason;
-    order.cancelledAt = order.updatedAt;
-    order.cancelledById = user.id;
-    const table = state.tables.find((entry) => entry.n === order.table);
-    const tableStillActive = state.orders.some(
-      (entry) =>
-        entry.table === order.table &&
-        !entry.paid &&
-        ["new", "preparing", "ready", "served"].includes(entry.status),
-    );
-    if (table && !tableStillActive) table.status = "available";
+    cancelTickets(state, user, payload, id);
     return;
   }
   if (action === "sale.pay") {
@@ -1511,7 +1472,8 @@ export class RestaurantCoordinator extends DurableObject<Env> {
       }
       throw new HttpError(404, "Not found.");
     } catch (error) {
-      const known = error instanceof HttpError;
+      const known =
+        error instanceof HttpError || error instanceof CancellationError;
       console.error(
         JSON.stringify({
           level: known && error.status < 500 ? "warn" : "error",

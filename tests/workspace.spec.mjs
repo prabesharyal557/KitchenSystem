@@ -167,10 +167,10 @@ test("Android shows a download notice when a newer app version is available", as
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 7,
-            versionName: "1.6",
+            versionCode: 8,
+            versionName: "1.7",
             downloadUrl:
-              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.6",
+              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.7",
             releaseNotes: "A newer test release.",
           }),
         });
@@ -179,10 +179,10 @@ test("Android shows a download notice when a newer app version is available", as
   );
   await page.goto("/");
   const notice = page.locator(".app-update");
-  await expect(notice).toContainText("Sajilo 1.6 is available");
+  await expect(notice).toContainText("Sajilo 1.7 is available");
   await expect(
     notice.getByRole("link", { name: "Download update" }),
-  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.6$/);
+  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.7$/);
   await notice.getByRole("button", { name: "Later" }).click();
   await expect(notice).toHaveCount(0);
 });
@@ -595,6 +595,7 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(
     cancellationDialog.getByRole("heading", { name: /Cancel order/ }),
   ).toBeVisible();
+  await cancellationDialog.getByRole("checkbox").check();
   await cancellationDialog
     .getByLabel("Cancellation reason")
     .selectOption("Customer changed mind");
@@ -610,6 +611,73 @@ test("manager and waiter receive new, ready and served notifications", async ({
   await expect(kitchen.locator(".order-alert")).toHaveCount(0, {
     timeout: 10000,
   });
+  await expect(
+    kitchen.getByRole("heading", {
+      name: "Cancelled orders · stop preparation",
+    }),
+  ).toBeVisible();
+  await expect(kitchen.locator(".korder.cancelled")).toContainText(
+    "Customer changed mind",
+    { timeout: 10000 },
+  );
+  state = await action("order.create", {
+    table: 4,
+    items: [
+      { id: item.id, qty: 1 },
+      { id: item.id, qty: 2 },
+    ],
+  });
+  const partialId = state.orders[0].id;
+  const partialRow = waiter
+    .locator(".sale-row")
+    .filter({ hasText: partialId.slice(0, 6) });
+  await partialRow.getByRole("button", { name: "Cancel", exact: true }).click();
+  await waiter.getByRole("dialog").getByRole("checkbox").first().check();
+  await waiter
+    .getByRole("dialog")
+    .getByLabel("Cancellation reason")
+    .selectOption("Ordered by mistake");
+  await waiter
+    .getByRole("dialog")
+    .getByRole("button", { name: "Confirm cancellation" })
+    .click();
+  await expect(partialRow).toContainText("Buff Momo × 2");
+  await expect(
+    partialRow.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeVisible();
+  await expect(
+    kitchen
+      .locator(".korder.cancelled")
+      .filter({ hasText: "Ordered by mistake" }),
+  ).toBeVisible({ timeout: 10000 });
+  state = await action("order.create", {
+    table: 4,
+    items: [{ id: item.id, qty: 1 }],
+  });
+  await expect(
+    waiter
+      .locator(".sale-row")
+      .filter({ hasText: state.orders[0].id.slice(0, 6) }),
+  ).toBeVisible({ timeout: 10000 });
+  await partialRow.getByRole("button", { name: "Cancel", exact: true }).click();
+  await waiter
+    .getByRole("dialog")
+    .getByLabel("Cancel", { exact: true })
+    .selectOption("table");
+  await waiter
+    .getByRole("dialog")
+    .getByLabel("Cancellation reason")
+    .selectOption("Guest left before service");
+  await waiter
+    .getByRole("dialog")
+    .getByRole("button", { name: "Confirm cancellation" })
+    .click();
+  await expect(partialRow).toContainText("Cancelled");
+  await expect(
+    waiter
+      .locator(".sale-row")
+      .filter({ hasText: state.orders[0].id.slice(0, 6) }),
+  ).toContainText("Cancelled");
   await Promise.all([
     managerContext.close(),
     kitchenContext.close(),

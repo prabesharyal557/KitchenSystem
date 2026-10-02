@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -99,8 +99,11 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   assert.equal((await fetch(base + "/terms.html")).status, 200);
   assert.equal((await fetch(base + "/privacy.html")).status, 200);
   const release = await (await fetch(base + "/app-version.json")).json();
-  assert.equal(release.versionCode, 6);
-  assert.equal(release.versionName, "1.5");
+  const manifest = JSON.parse(
+    readFileSync(new URL("../app-version.json", import.meta.url), "utf8"),
+  );
+  assert.equal(release.versionCode, manifest.versionCode);
+  assert.equal(release.versionName, manifest.versionName);
   const state = (await request("state")).data;
   assert.equal(state.sales.length, 0);
   assert.equal(state.orders.length, 0);

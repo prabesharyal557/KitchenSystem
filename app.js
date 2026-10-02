@@ -468,6 +468,10 @@
       order.version = (order.version || 1) + 1;
       order.updatedAt = new Date().toISOString();
     } else if (action === "order.cancel") {
+      if (payload.scope === "items" || payload.scope === "table")
+        throw new Error(
+          "Item and whole-table cancellations require internet. Reconnect and try again.",
+        );
       if (!["manager", "waiter"].includes(state.user.role))
         throw new Error("This account cannot cancel orders.");
       const order = state.orders.find(
@@ -1136,6 +1140,23 @@
           })
           .join("") +
         "</div>" +
+        (workspace === "kitchen"
+          ? card(
+              "Cancelled orders · stop preparation",
+              db.orders
+                .filter((o) => o.status === "cancelled")
+                .sort((a, b) =>
+                  (b.cancelledAt || b.createdAt).localeCompare(
+                    a.cancelledAt || a.createdAt,
+                  ),
+                )
+                .map(
+                  (o) =>
+                    `<article class="korder cancelled"><div class="top"><b>Table ${o.table} · #${esc(o.id.slice(0, 6))}</b><span class="status cancelled">Cancelled</span></div><div class="body"><ul>${o.items.map((i) => `<li><b>${i.qty}×</b> ${esc(i.name)}</li>`).join("")}</ul><p class="cancellation-detail">${esc(o.cancellationReason || "Not recorded")} · ${stamp(o.cancelledAt || o.createdAt)}</p></div></article>`,
+                )
+                .join("") || empty("No cancelled orders."),
+            )
+          : "") +
         (workspace === "manager" && awaiting.length
           ? card(
               "Served · collect payment",
@@ -1220,7 +1241,16 @@
     form(
       `Cancel order #${order.id.slice(0, 6)}`,
       "order-cancel",
-      `<div class="cancel-summary"><div><span>Table</span><b>${order.table}</b></div><div><span>Status</span><b>${esc(order.status)}</b></div><div><span>Order value</span><b>${money(subtotal)}</b></div></div><div class="notice">This removes the ticket from active service and keeps it permanently in Order History. It cannot be paid after cancellation.</div>${select(
+      `<div class="cancel-summary"><div><span>Table</span><b>${order.table}</b></div><div><span>Status</span><b>${esc(order.status)}</b></div><div><span>Order value</span><b>${money(subtotal)}</b></div></div>${select(
+        "Cancel",
+        "scope",
+        [
+          ["items", "Selected items"],
+          ["order", "This entire order"],
+          ["table", "Whole table · all unpaid orders"],
+        ],
+        "items",
+      )}<fieldset class="cancel-items"><legend>Items in this order</legend>${order.items.map((item, index) => `<label><input type="checkbox" name="itemIndex" value="${index}"> ${esc(item.name)} × ${item.qty} · ${money(item.price * item.qty)}</label>`).join("")}</fieldset><div class="notice">Selected items cancels the checked item lines, including all units on each line. Whole table cancels every unpaid order at this table. Cancelled items stay in history and are removed from the bill.</div>${select(
         "Cancellation reason",
         "reason",
         [
@@ -1240,7 +1270,7 @@
         "",
         'maxlength="240" rows="3" placeholder="Required when choosing Other"',
       )}<small>Cancelled by ${esc(db.user.name)}. Ready or served orders require a manager.</small>`,
-      `data-id="${order.id}" data-version="${order.version || 1}"`,
+      `data-id="${order.id}" data-version="${order.version || 1}" data-versions="${esc(JSON.stringify(Object.fromEntries(db.orders.filter((o) => o.table === order.table && !o.paid && o.status !== "cancelled").map((o) => [o.id, o.version || 1]))))}"`,
       "",
       "Confirm cancellation",
     );
@@ -1598,6 +1628,8 @@
           reason: p.reason,
         });
       else if (type === "order-cancel") {
+        if (p.scope === "items" && !new FormData(f).getAll("itemIndex").length)
+          throw new Error("Choose at least one item to cancel.");
         const details = String(p.details || "").trim();
         if (p.reason === "Other" && details.length < 3)
           throw new Error(
@@ -1612,6 +1644,9 @@
         await act("order.cancel", {
           id,
           expectedVersion: Number(f.dataset.version),
+          scope: p.scope,
+          itemIndexes: new FormData(f).getAll("itemIndex").map(Number),
+          expectedVersions: JSON.parse(f.dataset.versions),
           reason,
         });
       } else if (type === "manager-password") {
