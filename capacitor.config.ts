@@ -4,6 +4,9 @@ const config: CapacitorConfig = {
   appId: "com.prabesharyal557.kitchensystem",
   appName: "Sajilo Restaurant",
   webDir: "mobile-www",
+  plugins: {
+    CapacitorHttp: { enabled: true },
+  },
 };
 
 export default config;

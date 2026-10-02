@@ -178,7 +178,8 @@ function save(state: State) {
     JSON.stringify(state),
   );
 }
-if (!db.prepare("SELECT id FROM state WHERE id=1").get())
+const freshDatabase = !db.prepare("SELECT id FROM state WHERE id=1").get();
+if (freshDatabase)
   save({
     settings: { name: "Himalayan Bites", open: true, taxRate: 0 },
     tables: Array.from({ length: 12 }, (_, i) => ({
@@ -208,6 +209,26 @@ if (!db.prepare("SELECT id FROM state WHERE id=1").get())
     staff: [],
     payments: [],
   });
+if (freshDatabase && process.env.INITIAL_RESTAURANT_STATE) {
+  const restored = JSON.parse(process.env.INITIAL_RESTAURANT_STATE);
+  const fields = [
+    "tables",
+    "menu",
+    "orders",
+    "sales",
+    "staff",
+    "payments",
+  ] as const;
+  if (
+    !restored.settings ||
+    fields.some((field) => !Array.isArray(restored[field]))
+  )
+    throw new Error("Invalid initial restaurant backup");
+  const state = read();
+  state.settings = restored.settings;
+  for (const field of fields) state[field] = restored[field];
+  save(state);
+}
 const initialManagerPassword = process.env.INITIAL_MANAGER_PASSWORD;
 if (initialManagerPassword) {
   const state = read();
@@ -355,6 +376,14 @@ function account(req: IncomingMessage, state: State) {
 function manager(u: Staff) {
   requireThat(u.role === "manager", "Manager access required.", 403);
 }
+function sessionCookieAttributes(req: IncomingMessage) {
+  const mobile = [
+    "capacitor://localhost",
+    "http://localhost",
+    "https://localhost",
+  ].includes(req.headers.origin || "");
+  return `HttpOnly; SameSite=${mobile ? "None" : "Strict"}; Path=/${mobile || process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`;
+}
 function session(req: IncomingMessage, res: ServerResponse, user: Staff) {
   const name = sessionCookieName(req);
   const token = randomBytes(32).toString("hex");
@@ -371,7 +400,7 @@ function session(req: IncomingMessage, res: ServerResponse, user: Staff) {
   );
   res.setHeader(
     "Set-Cookie",
-    `${name}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionSeconds}${process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`,
+    `${name}=${token}; ${sessionCookieAttributes(req)}; Max-Age=${sessionSeconds}`,
   );
 }
 const limits = new Map<string, { count: number; reset: number }>();
@@ -849,7 +878,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://sajilo-restaurant.aryalprabesh300.workers.dev; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://sajilo-restaurant.onrender.com https://sajilo-restaurant.aryalprabesh300.workers.dev; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   );
   try {
     const path = new URL(req.url || "/", "http://localhost").pathname;
@@ -956,7 +985,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         db.prepare("DELETE FROM sessions WHERE token=?").run(sessionKey(req));
         res.setHeader(
           "Set-Cookie",
-          `${sessionCookieName(req)}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.SECURE_COOKIE === "1" ? "; Secure" : ""}`,
+          `${sessionCookieName(req)}=; ${sessionCookieAttributes(req)}; Max-Age=0`,
         );
         output(res, 200, { ok: true });
         return;

@@ -108,6 +108,35 @@ test("login-only bootstrap, session cookies, unauthenticated access and static a
   assert.equal(state.sales.length, 0);
   assert.equal(state.orders.length, 0);
 });
+test("Android login receives secure cross-site cookies and supports authenticated state", async () => {
+  const scope = "a".repeat(32);
+  const mobile = { Origin: "https://localhost", "X-Sajilo-Session": scope };
+  const login = await request(
+    "login",
+    { username: "manager", password: "test-manager-password" },
+    undefined,
+    mobile,
+  );
+  assert.equal(login.status, 200);
+  assert.match(login.headers.get("set-cookie"), /SameSite=None/);
+  assert.match(login.headers.get("set-cookie"), /Secure/);
+  assert.match(login.headers.get("set-cookie"), /HttpOnly/);
+  assert.equal(
+    login.headers.get("access-control-allow-origin"),
+    "https://localhost",
+  );
+  const state = await request("state", undefined, login.cookie, mobile);
+  assert.equal(state.status, 200);
+  assert.equal(state.data.user.role, "manager");
+  const logout = await request("logout", {}, login.cookie, mobile);
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get("set-cookie"), /SameSite=None/);
+  assert.equal(
+    (await request("state", undefined, login.cookie, mobile)).status,
+    401,
+  );
+});
+
 test("staff accounts, hashing, role boundaries and private payroll", async () => {
   const denied = await request("action", {
     action: "staff.save",
