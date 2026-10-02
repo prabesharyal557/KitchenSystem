@@ -69,20 +69,61 @@ test("whole table cancellation cancels all unpaid tickets and releases table", (
   assert.ok(state.orders.every((o) => o.status === "cancelled"));
   assert.equal(state.tables[0].status, "available");
 });
-test("waiter cannot partially cancel ready food or partially cancel a table with ready food", () => {
-  const state = fixture(),
-    before = structuredClone(state);
-  assert.throws(
-    () =>
+test("waiter can cancel the whole unpaid table including ready food", () => {
+  const state = fixture();
+  cancelTickets(
+    state,
+    { id: "waiter", role: "waiter" },
+    { ...payload, scope: "table", expectedVersions: { one: 1, two: 2 } },
+    () => "unused",
+  );
+  assert.ok(state.orders.every((order) => order.status === "cancelled"));
+});
+
+test("waiter cancels one of three Cokes and preserves remaining quantity and billing", () => {
+  for (const status of ["new", "preparing", "ready", "served"]) {
+    const state = fixture();
+    state.orders[0].status = status;
+    state.orders[0].items = [
+      { id: "coke", name: "Coke", price: 80, cost: 20, qty: 3 },
+    ];
+    cancelTickets(
+      state,
+      { id: "waiter", role: "waiter" },
+      {
+        ...payload,
+        scope: "items",
+        itemIndexes: [0],
+        itemQuantities: { 0: 1 },
+      },
+      () => "cancelled-coke",
+    );
+    assert.equal(state.orders[0].items[0].qty, 2);
+    assert.equal(state.orders[0].status, status);
+    assert.equal(state.orders[2].items[0].qty, 1);
+    assert.equal(state.orders[2].cancelledById, "waiter");
+    assert.equal(calculateBill(state.orders[0].items, 0).total, 160);
+  }
+});
+test("invalid quantities are rejected without changing the order", () => {
+  for (const qty of [0, -1, 4, 1.5, "1", null, undefined]) {
+    const state = fixture(),
+      before = structuredClone(state);
+    assert.throws(() =>
       cancelTickets(
         state,
-        { id: "waiter", role: "waiter" },
-        { ...payload, scope: "table", expectedVersions: { one: 1, two: 2 } },
+        manager,
+        {
+          ...payload,
+          scope: "items",
+          itemIndexes: [0],
+          itemQuantities: { 0: qty },
+        },
         () => "unused",
       ),
-    { status: 403 },
-  );
-  assert.deepEqual(state, before);
+    );
+    assert.deepEqual(state, before);
+  }
 });
 test("stale table snapshot is rejected atomically", () => {
   const state = fixture(),

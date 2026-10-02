@@ -51,8 +51,6 @@ export function cancelTickets(
   for (const order of targets) {
     if (!["new", "preparing", "ready", "served"].includes(order.status))
       fail("Order cannot be cancelled.");
-    if (user.role !== "manager" && !["new", "preparing"].includes(order.status))
-      fail("A manager must cancel an order that is ready or served.", 403);
     const expected =
       payload.scope === "table"
         ? payload.expectedVersions?.[order.id]
@@ -79,15 +77,34 @@ export function cancelTickets(
       ))
   )
     fail("Select valid items to cancel.");
+  const quantities = new Map<number, number>();
+  if (payload.scope === "items") {
+    for (const index of indexes) {
+      const qty =
+        payload.itemQuantities === undefined
+          ? source!.items[index].qty
+          : payload.itemQuantities?.[index];
+      if (!Number.isInteger(qty) || qty < 1 || qty > source!.items[index].qty)
+        fail(
+          "Cancellation quantity must be between 1 and the ordered quantity.",
+        );
+      quantities.set(index, qty);
+    }
+  }
   const time = new Date().toISOString();
   for (const order of targets) {
     const selected =
       payload.scope === "items"
-        ? order.items.filter((_, i) => indexes.includes(i))
+        ? order.items.flatMap((item, i) =>
+            quantities.has(i) ? [{ ...item, qty: quantities.get(i)! }] : [],
+          )
         : order.items;
     const remaining =
       payload.scope === "items"
-        ? order.items.filter((_, i) => !indexes.includes(i))
+        ? order.items.flatMap((item, i) => {
+            const qty = item.qty - (quantities.get(i) || 0);
+            return qty > 0 ? [{ ...item, qty }] : [];
+          })
         : [];
     const cancelled = remaining.length
       ? { ...order, id: makeId(), items: selected, version: 1 }

@@ -622,17 +622,19 @@ test("manager and waiter receive new, ready and served notifications", async ({
   );
   state = await action("order.create", {
     table: 4,
-    items: [
-      { id: item.id, qty: 1 },
-      { id: item.id, qty: 2 },
-    ],
+    items: [{ id: item.id, qty: 3 }],
   });
   const partialId = state.orders[0].id;
+  await action("order.advance", { id: partialId, status: "new" });
   const partialRow = waiter
     .locator(".sale-row")
     .filter({ hasText: partialId.slice(0, 6) });
+  await expect(partialRow.locator(".status")).toHaveText("ready", {
+    timeout: 10000,
+  });
   await partialRow.getByRole("button", { name: "Cancel", exact: true }).click();
   await waiter.getByRole("dialog").getByRole("checkbox").first().check();
+  await waiter.getByRole("dialog").getByRole("spinbutton").fill("1");
   await waiter
     .getByRole("dialog")
     .getByLabel("Cancellation reason")

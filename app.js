@@ -481,13 +481,6 @@
           ["new", "preparing", "ready", "served"].includes(entry.status),
       );
       if (!order) throw new Error("This order cannot be cancelled offline.");
-      if (
-        state.user.role !== "manager" &&
-        !["new", "preparing"].includes(order.status)
-      )
-        throw new Error(
-          "A manager must cancel an order that is ready or served.",
-        );
       const reason =
         typeof payload.reason === "string" ? payload.reason.trim() : "";
       if (reason.length < 3 || reason.length > 300)
@@ -1093,9 +1086,7 @@
                           )
                         : '<div class="pickup-note">✓ Waiter notified · Awaiting service</div>';
                   const cancelAction =
-                    workspace === "kitchen" ||
-                    (workspace === "waiter" &&
-                      !["new", "preparing"].includes(o.status))
+                    workspace === "kitchen"
                       ? ""
                       : button(
                           "Cancel order",
@@ -1190,7 +1181,7 @@
               o.status === "cancelled"
                 ? `<small class="cancellation-detail"><b>Reason:</b> ${esc(o.cancellationReason || "Not recorded")} · ${o.cancelledAt ? stamp(o.cancelledAt) : "Time unavailable"}${cancelledBy ? ` · by ${esc(cancelledBy)}` : ""}</small>`
                 : "";
-            return `<div class="sale-row"><div class="grow"><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small>${cancellation}</div><div class="actions"><span class="status ${o.status}">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && (workspace === "manager" ? ["new", "preparing", "ready", "served"].includes(o.status) : ["new", "preparing"].includes(o.status)) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`;
+            return `<div class="sale-row"><div class="grow"><b>Table ${o.table} · #${o.id.slice(0, 6)}</b><small>${stamp(o.createdAt)} · ${o.items.map((i) => esc(i.name) + " × " + i.qty).join(", ")}</small>${cancellation}</div><div class="actions"><span class="status ${o.status}">${o.paid ? "Paid" : o.status === "cancelled" ? "Cancelled" : o.status}</span>${!o.paid && ["new", "preparing", "ready", "served"].includes(o.status) ? button("Cancel", "cancel-order", `data-id="${o.id}"`, true) : ""}</div></div>`;
           })
           .join("") || empty("No orders yet."),
       ),
@@ -1250,7 +1241,7 @@
           ["table", "Whole table · all unpaid orders"],
         ],
         "items",
-      )}<fieldset class="cancel-items"><legend>Items in this order</legend>${order.items.map((item, index) => `<label><input type="checkbox" name="itemIndex" value="${index}"> ${esc(item.name)} × ${item.qty} · ${money(item.price * item.qty)}</label>`).join("")}</fieldset><div class="notice">Selected items cancels the checked item lines, including all units on each line. Whole table cancels every unpaid order at this table. Cancelled items stay in history and are removed from the bill.</div>${select(
+      )}<fieldset class="cancel-items"><legend>Choose items and quantities to cancel</legend>${order.items.map((item, index) => `<div class="cancel-item"><label><input type="checkbox" name="itemIndex" value="${index}"> ${esc(item.name)} × ${item.qty} · ${money(item.price * item.qty)}</label><label>Quantity to cancel<input type="number" name="cancelQty${index}" aria-label="Quantity to cancel for ${esc(item.name)} (item ${index + 1})" value="1" min="1" max="${item.qty}" step="1" required></label></div>`).join("")}</fieldset><div class="notice">Choose how many units of each checked item to cancel. For example, cancel 1 of 3 Cokes and keep 2 on the bill. Whole table cancels every unpaid order at this table. Cancelled quantities stay in history and appear in the kitchen cancellation section.</div>${select(
         "Cancellation reason",
         "reason",
         [
@@ -1269,7 +1260,7 @@
         "details",
         "",
         'maxlength="240" rows="3" placeholder="Required when choosing Other"',
-      )}<small>Cancelled by ${esc(db.user.name)}. Ready or served orders require a manager.</small>`,
+      )}<small>Cancelled by ${esc(db.user.name)}. Managers and waiters can cancel unpaid orders.</small>`,
       `data-id="${order.id}" data-version="${order.version || 1}" data-versions="${esc(JSON.stringify(Object.fromEntries(db.orders.filter((o) => o.table === order.table && !o.paid && o.status !== "cancelled").map((o) => [o.id, o.version || 1]))))}"`,
       "",
       "Confirm cancellation",
@@ -1646,6 +1637,11 @@
           expectedVersion: Number(f.dataset.version),
           scope: p.scope,
           itemIndexes: new FormData(f).getAll("itemIndex").map(Number),
+          itemQuantities: Object.fromEntries(
+            new FormData(f)
+              .getAll("itemIndex")
+              .map((index) => [index, Number(p[`cancelQty${index}`])]),
+          ),
           expectedVersions: JSON.parse(f.dataset.versions),
           reason,
         });

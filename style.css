@@ -765,6 +765,13 @@ textarea:focus {
   align-items: center;
   gap: 10px;
 }
+.cancel-item {
+  display: grid;
+  gap: 10px;
+}
+.cancel-item input[type="number"] {
+  width: 80px;
+}
 .cancel-items input[type="checkbox"] {
   width: 20px;
   height: 20px;

@@ -440,29 +440,19 @@ test("cancellation requires a reason, preserves attribution, and frees only an i
     (
       await action(
         "order.cancel",
-        { id: secondOrderId, reason: "Customer changed mind" },
-        waiterCookie,
-      )
-    ).status,
-    403,
-  );
-  assert.equal(
-    (
-      await action(
-        "order.cancel",
         { id: secondOrderId, reason: "" },
         managerCookie,
       )
     ).status,
     400,
   );
-  const managerCancelled = await action(
+  const waiterCancelled = await action(
     "order.cancel",
     { id: secondOrderId, reason: "Guest left before service" },
-    managerCookie,
+    waiterCookie,
   );
   assert.equal(
-    managerCancelled.data.tables.find((table) => table.n === 2).status,
+    waiterCancelled.data.tables.find((table) => table.n === 2).status,
     "available",
   );
   assert.equal(
