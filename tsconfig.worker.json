@@ -9,5 +9,11 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["cloudflare-worker.ts", "domain.ts", "worker-configuration.d.ts"]
+  "include": [
+    "cloudflare-worker.ts",
+    "domain.ts",
+    "worker-configuration.d.ts",
+    "cloudflare-backup-worker.ts",
+    "cloudflare-backup.ts"
+  ]
 }

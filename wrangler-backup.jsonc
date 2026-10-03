@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sajilo-restaurant-backup",
+  "main": "./cloudflare-backup-worker.ts",
+  "compatibility_date": "2026-09-26",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sajilo-restaurant",
+      "database_id": "3d626431-cbdc-4a15-9514-6ed919a2d1bc",
+    },
+    {
+      "binding": "BACKUP_DB",
+      "database_name": "sajilo-restaurant-backups",
+      "database_id": "c30cb75b-7e7b-4974-b3d8-ef5cd77aba06",
+    },
+  ],
+  "triggers": { "crons": ["0 * * * *"] },
+  "observability": { "enabled": true },
+}

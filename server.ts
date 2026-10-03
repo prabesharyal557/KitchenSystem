@@ -882,6 +882,55 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   );
   try {
     const path = new URL(req.url || "/", "http://localhost").pathname;
+    if (process.env.CLOUDFLARE_ORIGIN) {
+      const cloudflare = new URL(process.env.CLOUDFLARE_ORIGIN);
+      requireThat(
+        cloudflare.origin ===
+          "https://sajilo-restaurant.aryalprabesh300.workers.dev",
+        "Invalid Cloudflare upstream.",
+        503,
+      );
+      const target = new URL(req.url || "/", cloudflare);
+      if (!path.startsWith("/api/")) {
+        res.writeHead(302, { Location: target.toString() });
+        res.end();
+        return;
+      }
+      requireThat(
+        ["GET", "POST"].includes(req.method || ""),
+        "Method not allowed.",
+        405,
+      );
+      requireThat(
+        !origin || capacitorOrigin || new URL(origin).host === req.headers.host,
+        "Cross-origin request rejected.",
+        403,
+      );
+      const headers = new Headers();
+      for (const name of ["cookie", "content-type", "x-sajilo-session"]) {
+        const value = req.headers[name];
+        if (typeof value === "string") headers.set(name, value);
+      }
+      if (origin)
+        headers.set("Origin", capacitorOrigin ? origin : cloudflare.origin);
+      const upstream = await fetch(target, {
+        method: req.method,
+        headers,
+        body:
+          req.method === "POST" ? JSON.stringify(await body(req)) : undefined,
+        redirect: "manual",
+        signal: AbortSignal.timeout(15000),
+      });
+      for (const name of ["content-type", "cache-control"]) {
+        const value = upstream.headers.get(name);
+        if (value) res.setHeader(name, value);
+      }
+      const cookies = upstream.headers.getSetCookie();
+      if (cookies.length) res.setHeader("Set-Cookie", cookies);
+      res.statusCode = upstream.status;
+      res.end(Buffer.from(await upstream.arrayBuffer()));
+      return;
+    }
     if (path.startsWith("/api/")) {
       sessionCookieName(req);
       requireThat(

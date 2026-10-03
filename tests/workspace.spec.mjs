@@ -35,7 +35,7 @@ test("Android reopens saved workspace with cloud requests blocked", async ({
   });
   let cloudRequests = 0;
   await page.route(
-    "https://sajilo-restaurant.onrender.com/**",
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
     async (route) => {
       cloudRequests++;
       await route.abort("internetdisconnected");
@@ -115,7 +115,7 @@ test("Android saves a food order locally when fetch fails", async ({
       },
     };
   });
-  await page.route("https://sajilo-restaurant.onrender.com/**", (route) =>
+  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", (route) =>
     route.abort("internetdisconnected"),
   );
   await page.goto("/");
@@ -160,16 +160,16 @@ test("Android shows a download notice when a newer app version is available", as
     };
   });
   await page.route(
-    "https://sajilo-restaurant.onrender.com/**",
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
     async (route) => {
       if (new URL(route.request().url()).pathname === "/app-version.json")
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 10,
-            versionName: "1.9",
+            versionCode: 11,
+            versionName: "2.0",
             downloadUrl:
-              "https://sajilo-restaurant.onrender.com/download/Sajilo-Restaurant-release.apk?v=1.9",
+              "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=2.0",
             releaseNotes: "A newer test release.",
           }),
         });
@@ -178,10 +178,10 @@ test("Android shows a download notice when a newer app version is available", as
   );
   await page.goto("/");
   const notice = page.locator(".app-update");
-  await expect(notice).toContainText("Sajilo 1.9 is available");
+  await expect(notice).toContainText("Sajilo 2.0 is available");
   await expect(
     notice.getByRole("link", { name: "Download update" }),
-  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.9$/);
+  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=2\.0$/);
   await notice.getByRole("button", { name: "Later" }).click();
   await expect(notice).toHaveCount(0);
 });
