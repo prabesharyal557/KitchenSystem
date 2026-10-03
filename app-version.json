@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.7",
-  "downloadUrl": "https://sajilo-restaurant.onrender.com/download/Sajilo-Restaurant-release.apk?v=1.7",
-  "releaseNotes": "Connects Android login to the Render website and includes cancellation by quantity. This release uses a new signing key: sync pending orders, uninstall the old app, then install this version."
+  "versionCode": 9,
+  "versionName": "1.8",
+  "downloadUrl": "https://sajilo-restaurant.onrender.com/download/Sajilo-Restaurant-release.apk?v=1.8",
+  "releaseNotes": "Vertical sidebar with animated selection and smooth icon effects. Updates directly over version 1.7."
 }

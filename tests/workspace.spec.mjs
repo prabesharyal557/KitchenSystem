@@ -166,10 +166,10 @@ test("Android shows a download notice when a newer app version is available", as
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 9,
-            versionName: "1.8",
+            versionCode: 10,
+            versionName: "1.9",
             downloadUrl:
-              "https://sajilo-restaurant.onrender.com/download/Sajilo-Restaurant-release.apk?v=1.8",
+              "https://sajilo-restaurant.onrender.com/download/Sajilo-Restaurant-release.apk?v=1.9",
             releaseNotes: "A newer test release.",
           }),
         });
@@ -178,10 +178,10 @@ test("Android shows a download notice when a newer app version is available", as
   );
   await page.goto("/");
   const notice = page.locator(".app-update");
-  await expect(notice).toContainText("Sajilo 1.8 is available");
+  await expect(notice).toContainText("Sajilo 1.9 is available");
   await expect(
     notice.getByRole("link", { name: "Download update" }),
-  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.8$/);
+  ).toHaveAttribute("href", /Sajilo-Restaurant-release\.apk\?v=1\.9$/);
   await notice.getByRole("button", { name: "Later" }).click();
   await expect(notice).toHaveCount(0);
 });
