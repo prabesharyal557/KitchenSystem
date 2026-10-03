@@ -1,4 +1,5 @@
 import { cancelTickets, CancellationError } from "./cancellation.ts";
+import { recoverManager } from "./manager-recovery.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
   createHash,
@@ -1201,6 +1202,46 @@ export class RestaurantCoordinator extends DurableObject<Env> {
       const payload = request.method === "POST" ? await parseBody(request) : {};
       if (path === "/api/setup" && request.method === "POST")
         throw new HttpError(404, "Manager setup is disabled.");
+      if (path === "/api/recover-manager" && request.method === "POST") {
+        const login = username(payload.username);
+        const key = await this.loginLimit(request, `recovery:${login}`);
+        const globalRequest = new Request(request.url, {
+          headers: { "CF-Connecting-IP": "manager-recovery-global" },
+        });
+        const globalKey = await this.loginLimit(
+          globalRequest,
+          "manager-recovery",
+        );
+        const state = await this.state();
+        const member = state.staff.find((staff) => staff.username === login);
+        let recovered;
+        try {
+          recovered = await recoverManager(this.env.DB, member, payload);
+        } catch (error) {
+          throw new HttpError(
+            400,
+            error instanceof Error ? error.message : "Recovery failed.",
+          );
+        }
+        if (!recovered) {
+          await this.failedLogin(key);
+          await this.failedLogin(globalKey);
+          await this.env.DB.prepare(
+            "INSERT INTO audit_events (id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, entity_id, reason, request_id) VALUES (?, ?, NULL, ?, 'unknown', 'account.recovery.failed', 'staff', NULL, 'Invalid manager account or recovery code', ?)",
+          )
+            .bind(id(), now(), login, requestId)
+            .run();
+          throw new HttpError(401, "Invalid manager account or recovery code.");
+        }
+        await this.env.DB.prepare(
+          "INSERT INTO audit_events (id, created_at, actor_staff_id, actor_username, actor_role, action, entity_type, entity_id, reason, request_id) VALUES (?, ?, ?, ?, 'manager', 'account.recovery', 'staff', ?, 'One-time manager recovery; code rotated', ?)",
+        )
+          .bind(id(), now(), member!.id, login, member!.id, requestId)
+          .run();
+        return json({ ok: true }, 200, {
+          "Set-Cookie": cookie(request, "", 0),
+        });
+      }
       if (path === "/api/login" && request.method === "POST") {
         const state = await this.state();
         const login = username(payload.username);

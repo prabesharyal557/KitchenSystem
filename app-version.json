@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "1.9",
-  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.9",
-  "releaseNotes": "Connects the app to permanent Cloudflare D1 storage, preserving staff accounts across updates. Includes private hourly Cloudflare backups."
+  "versionCode": 11,
+  "versionName": "1.10",
+  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.10",
+  "releaseNotes": "Adds protected manager password recovery with a one-time code and keeps permanent Cloudflare storage."
 }

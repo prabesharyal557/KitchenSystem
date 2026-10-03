@@ -1586,6 +1586,20 @@
           busy = false;
           f.querySelector('button[type="submit"]').disabled = false;
         }
+      } else if (type === "recover-manager") {
+        busy = true;
+        f.querySelector('button[type="submit"]').disabled = true;
+        try {
+          await api("recover-manager", p);
+          location.href =
+            "/?message=" +
+            encodeURIComponent(
+              "Manager password changed. Your old recovery code no longer works. Keep your new recovery code private, then sign in.",
+            );
+        } finally {
+          busy = false;
+          f.querySelector('button[type="submit"]').disabled = false;
+        }
       } else if (type === "table-add")
         await act("table.add", { n: Number(p.n), seats: Number(p.seats) });
       else if (type === "table-edit")
@@ -1698,7 +1712,7 @@
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><small>Need access or a password reset? Ask your manager.</small>${!isAndroidApp ? '<p><a class="button light" href="https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.9">Download Android app · v1.9</a></p>' : ""}${isAndroidApp ? '<div class="ios-install"><b>Android app</b><span>Online, offline and update notices</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><details class="manager-recovery"><summary>Forgot password?</summary><p>Recover your manager account. After signing in, open Staff to reset another user’s password.</p><form class="form-grid" data-form="recover-manager">${field("Manager username", "username", "manager", "text", 'required autocomplete="username"')}${field("Recovery code", "code", "", "password", 'required maxlength="128" autocomplete="off"')}${field("New password", "newPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("Confirm new password", "confirmPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("New recovery code — keep it private", "newRecoveryCode", "", "password", 'required minlength="16" maxlength="128" autocomplete="off"')}<small>Choose a new recovery code with at least 16 characters. Your current code stops working after recovery.</small><div class="form-error" role="alert"></div><button class="button" type="submit">Reset manager password</button></form></details><small>Staff password reset? Ask your manager.</small>${!isAndroidApp ? '<p><a class="button light" href="https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.10">Download Android app · v1.10</a></p>' : ""}${isAndroidApp ? '<div class="ios-install"><b>Android app</b><span>Online, offline and update notices</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
       // Open saved work immediately, even when a network request would hang.

@@ -1,4 +1,34 @@
 import { test, expect } from "@playwright/test";
+
+test("forgot-password form submits manager recovery and returns to sign-in", async ({
+  page,
+}) => {
+  await page.route("**/api/recover-manager", async (route) => {
+    const payload = route.request().postDataJSON();
+    expect(payload.username).toBe("manager");
+    expect(payload.code).toBe("test-recovery-code");
+    expect(payload.newPassword).toBe("new-test-manager-password");
+    expect(payload.confirmPassword).toBe(payload.newPassword);
+    expect(payload.newRecoveryCode).toBe("new-private-test-code");
+    await route.fulfill({
+      contentType: "application/json",
+      body: '{"ok":true}',
+    });
+  });
+  await page.goto("/");
+  await page.getByText("Forgot password?", { exact: true }).click();
+  const form = page.locator('form[data-form="recover-manager"]');
+  await form.locator('[name="code"]').fill("test-recovery-code");
+  await form.locator('[name="newPassword"]').fill("new-test-manager-password");
+  await form
+    .locator('[name="confirmPassword"]')
+    .fill("new-test-manager-password");
+  await form.locator('[name="newRecoveryCode"]').fill("new-private-test-code");
+  await form.getByRole("button", { name: "Reset manager password" }).click();
+  await expect(
+    page.locator('form[data-form="login"] .form-error'),
+  ).toContainText("Manager password changed.");
+});
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -115,8 +145,9 @@ test("Android saves a food order locally when fetch fails", async ({
       },
     };
   });
-  await page.route("https://sajilo-restaurant.aryalprabesh300.workers.dev/**", (route) =>
-    route.abort("internetdisconnected"),
+  await page.route(
+    "https://sajilo-restaurant.aryalprabesh300.workers.dev/**",
+    (route) => route.abort("internetdisconnected"),
   );
   await page.goto("/");
   await page.getByRole("button", { name: "Open table" }).click();
@@ -166,7 +197,7 @@ test("Android shows a download notice when a newer app version is available", as
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 11,
+            versionCode: 12,
             versionName: "2.0",
             downloadUrl:
               "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=2.0",
