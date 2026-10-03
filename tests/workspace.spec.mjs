@@ -3,6 +3,18 @@ import { test, expect } from "@playwright/test";
 test("forgot-password form submits manager recovery and returns to sign-in", async ({
   page,
 }) => {
+  await page.route("**/api/verify-recovery-code", async (route) => {
+    const valid = route.request().postDataJSON().code === "test-recovery-code";
+    await route.fulfill({
+      status: valid ? 200 : 401,
+      contentType: "application/json",
+      body: JSON.stringify(
+        valid
+          ? { ok: true, username: "manager" }
+          : { error: "Incorrect recovery code." },
+      ),
+    });
+  });
   await page.route("**/api/recover-manager", async (route) => {
     const payload = route.request().postDataJSON();
     expect(payload.username).toBe("manager");
@@ -17,8 +29,33 @@ test("forgot-password form submits manager recovery and returns to sign-in", asy
   });
   await page.goto("/");
   await page.getByText("Forgot password?", { exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator("input")).toHaveCount(1);
+  await expect(page.locator('form[data-form="recover-manager"]')).toHaveCount(
+    0,
+  );
+  const rectangle = await dialog.boundingBox();
+  const viewport = page.viewportSize();
+  expect(
+    Math.abs(rectangle.x + rectangle.width / 2 - viewport.width / 2),
+  ).toBeLessThan(2);
+  expect(
+    Math.abs(rectangle.y + rectangle.height / 2 - viewport.height / 2),
+  ).toBeLessThan(2);
+  await dialog.locator('[name="code"]').fill("wrong-code");
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.locator(".form-error")).toContainText(
+    "Incorrect recovery code.",
+  );
+  await expect(page.locator('form[data-form="recover-manager"]')).toHaveCount(
+    0,
+  );
+  await dialog.locator('[name="code"]').fill("test-recovery-code");
+  await dialog.getByRole("button", { name: "Continue" }).click();
   const form = page.locator('form[data-form="recover-manager"]');
-  await form.locator('[name="code"]').fill("test-recovery-code");
+  await expect(form).toBeVisible();
+  await expect(form.locator('[name="code"]')).toHaveCount(0);
   await form.locator('[name="newPassword"]').fill("new-test-manager-password");
   await form
     .locator('[name="confirmPassword"]')
@@ -197,7 +234,7 @@ test("Android shows a download notice when a newer app version is available", as
         await route.fulfill({
           contentType: "application/json",
           body: JSON.stringify({
-            versionCode: 12,
+            versionCode: 13,
             versionName: "2.0",
             downloadUrl:
               "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=2.0",

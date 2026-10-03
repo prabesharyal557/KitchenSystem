@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { recoverManager, recoveryHash } from "../manager-recovery.ts";
+import { recoverManager, recoveryHash, verifyManagerRecoveryCode } from "../manager-recovery.ts";
 
 function fixture() {
   const db = new DatabaseSync(":memory:");
@@ -135,4 +135,18 @@ test("invalid replacement credentials do not consume a valid recovery code", asy
   } finally {
     f.db.close();
   }
+});
+
+test("code verification changes no password and only identifies an active manager", async () => {
+  const f = fixture();
+  const manager = { ...f.staff, username: "manager" };
+  try {
+    assert.equal(await verifyManagerRecoveryCode(f.adapter, [manager], "wrong"), undefined);
+    assert.equal(await verifyManagerRecoveryCode(f.adapter, [{ ...manager, role: "waiter" }], f.payload.code), undefined);
+    assert.equal(await verifyManagerRecoveryCode(f.adapter, [{ ...manager, active: false }], f.payload.code), undefined);
+    assert.equal(await verifyManagerRecoveryCode(f.adapter, [manager], f.payload.code), manager);
+    assert.equal(f.db.prepare("SELECT hash FROM credentials WHERE id='manager'").get().hash, "old-manager");
+    assert.equal(await recoverManager(f.adapter, f.staff, f.payload), true);
+    assert.equal(await verifyManagerRecoveryCode(f.adapter, [manager], f.payload.code), undefined);
+  } finally { f.db.close(); }
 });

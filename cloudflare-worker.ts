@@ -1,5 +1,8 @@
 import { cancelTickets, CancellationError } from "./cancellation.ts";
-import { recoverManager } from "./manager-recovery.ts";
+import {
+  recoverManager,
+  verifyManagerRecoveryCode,
+} from "./manager-recovery.ts";
 import { DurableObject } from "cloudflare:workers";
 import {
   createHash,
@@ -1202,6 +1205,28 @@ export class RestaurantCoordinator extends DurableObject<Env> {
       const payload = request.method === "POST" ? await parseBody(request) : {};
       if (path === "/api/setup" && request.method === "POST")
         throw new HttpError(404, "Manager setup is disabled.");
+      if (path === "/api/verify-recovery-code" && request.method === "POST") {
+        const key = await this.loginLimit(request, "recovery-code");
+        const globalRequest = new Request(request.url, {
+          headers: { "CF-Connecting-IP": "manager-recovery-global" },
+        });
+        const globalKey = await this.loginLimit(
+          globalRequest,
+          "manager-recovery",
+        );
+        const state = await this.state();
+        const member = await verifyManagerRecoveryCode(
+          this.env.DB,
+          state.staff,
+          payload.code,
+        );
+        if (!member) {
+          await this.failedLogin(key);
+          await this.failedLogin(globalKey);
+          throw new HttpError(401, "Incorrect or expired recovery code.");
+        }
+        return json({ ok: true, username: member.username });
+      }
       if (path === "/api/recover-manager" && request.method === "POST") {
         const login = username(payload.username);
         const key = await this.loginLimit(request, `recovery:${login}`);

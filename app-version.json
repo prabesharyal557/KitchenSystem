@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "1.10",
-  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.10",
-  "releaseNotes": "Adds protected manager password recovery with a one-time code and keeps permanent Cloudflare storage."
+  "versionCode": 12,
+  "versionName": "1.11",
+  "downloadUrl": "https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.11",
+  "releaseNotes": "Forgot password now opens a centered code-only popup; password fields appear after the code is verified."
 }

@@ -11,6 +11,27 @@ function matches(value: string, hash: string) {
   const expected = Buffer.from(stored, "hex");
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
+export async function verifyManagerRecoveryCode<
+  T extends { id: string; username: string; role: string; active: boolean },
+>(database: D1Database, staff: T[], value: unknown) {
+  const code = typeof value === "string" ? value.trim() : "";
+  if (!code || code.length > 128) return undefined;
+  for (const member of staff.filter(
+    (member) => member.role === "manager" && member.active,
+  )) {
+    const recovery = await database
+      .prepare("SELECT hash, expires FROM manager_recovery WHERE staff_id = ?")
+      .bind(member.id)
+      .first<{ hash: string; expires: number }>();
+    if (
+      recovery &&
+      recovery.expires >= Date.now() &&
+      matches(code, recovery.hash)
+    )
+      return member;
+  }
+  return undefined;
+}
 export async function recoverManager(
   database: D1Database,
   staff: { id: string; role: string; active: boolean } | undefined,

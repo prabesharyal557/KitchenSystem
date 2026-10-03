@@ -1,4 +1,4 @@
-const CACHE = "sajilo-shell-v9";
+const CACHE = "sajilo-shell-v10";
 const SHELL = [
   "/",
   "/index.html",

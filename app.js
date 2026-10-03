@@ -1204,6 +1204,30 @@
       button("Change table", "navigate", 'data-view="tables"', true),
     );
   }
+  let recoveryProof = null;
+  function recoveryModal(stage = "code") {
+    const content =
+      stage === "code"
+        ? `<form class="form-grid" data-form="recovery-code">${field("Recovery code", "code", "", "password", 'required maxlength="128" autocomplete="off" autofocus')}<div class="form-error" role="alert"></div><button class="button" type="submit">Continue</button></form>`
+        : `<form class="form-grid" data-form="recover-manager">${field("New password", "newPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password" autofocus')}${field("Confirm new password", "confirmPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("New recovery code — keep it private", "newRecoveryCode", "", "password", 'required minlength="16" maxlength="128" autocomplete="off"')}<small>Choose a new recovery code with at least 16 characters.</small><div class="form-error" role="alert"></div><button class="button" type="submit">Reset manager password</button></form>`;
+    const existing =
+      stage === "reset"
+        ? document.querySelector("dialog.recovery-dialog[open]")
+        : null;
+    if (existing)
+      existing.innerHTML = `<div class="modal-head"><h2>Reset password</h2><button data-action="close" aria-label="Close dialog">×</button></div>${content}`;
+    else modal("Forgot password", content);
+    const dialog = document.querySelector("dialog");
+    dialog.classList.add("recovery-dialog");
+    dialog.querySelector("input")?.focus();
+    dialog.addEventListener(
+      "close",
+      () => {
+        recoveryProof = null;
+      },
+      { once: true },
+    );
+  }
   function modal(title, content) {
     document.querySelector("dialog")?.remove();
     const d = document.createElement("dialog");
@@ -1357,7 +1381,10 @@
     const { action, id } = el.dataset;
     if (busy && action !== "navigate") return;
     try {
-      if (action === "enable-alerts") await enableOrderAlerts();
+      if (action === "forgot-password") {
+        recoveryProof = null;
+        recoveryModal();
+      } else if (action === "enable-alerts") await enableOrderAlerts();
       else if (action === "retry-sync") {
         await syncOfflineActions();
         const fresh = await api("state");
@@ -1586,11 +1613,25 @@
           busy = false;
           f.querySelector('button[type="submit"]').disabled = false;
         }
+      } else if (type === "recovery-code") {
+        busy = true;
+        f.querySelector('button[type="submit"]').disabled = true;
+        try {
+          const verified = await api("verify-recovery-code", { code: p.code });
+          recoveryProof = { code: p.code, username: verified.username };
+          recoveryModal("reset");
+        } finally {
+          busy = false;
+          f.querySelector('button[type="submit"]').disabled = false;
+        }
       } else if (type === "recover-manager") {
         busy = true;
         f.querySelector('button[type="submit"]').disabled = true;
         try {
-          await api("recover-manager", p);
+          if (!recoveryProof)
+            throw new Error("Verify your recovery code first.");
+          await api("recover-manager", { ...p, ...recoveryProof });
+          recoveryProof = null;
           location.href =
             "/?message=" +
             encodeURIComponent(
@@ -1712,7 +1753,7 @@
           }
           throw error;
         }
-        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form><details class="manager-recovery"><summary>Forgot password?</summary><p>Recover your manager account. After signing in, open Staff to reset another user’s password.</p><form class="form-grid" data-form="recover-manager">${field("Manager username", "username", "manager", "text", 'required autocomplete="username"')}${field("Recovery code", "code", "", "password", 'required maxlength="128" autocomplete="off"')}${field("New password", "newPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("Confirm new password", "confirmPassword", "", "password", 'required minlength="12" maxlength="128" autocomplete="new-password"')}${field("New recovery code — keep it private", "newRecoveryCode", "", "password", 'required minlength="16" maxlength="128" autocomplete="off"')}<small>Choose a new recovery code with at least 16 characters. Your current code stops working after recovery.</small><div class="form-error" role="alert"></div><button class="button" type="submit">Reset manager password</button></form></details><small>Staff password reset? Ask your manager.</small>${!isAndroidApp ? '<p><a class="button light" href="https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.10">Download Android app · v1.10</a></p>' : ""}${isAndroidApp ? '<div class="ios-install"><b>Android app</b><span>Online, offline and update notices</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
+        app.innerHTML = `<main class="login-shell"><section class="login-intro"><div class="brand">sajilo<span>●</span></div><span class="eyebrow">A LITTLE SIMPLER. A LOT SMOOTHER.</span><h1>Great service<br>starts here.</h1><p>Your tables, team and orders.<br>One connected restaurant.</p><div class="login-art">▦ <span>♨</span> ◈</div></section><section class="login-card"><span class="eyebrow">YOUR RESTAURANT WORKSPACE</span><h1>Welcome back.</h1><p class="sub">Sign in with your individual staff account.</p><form class="form-grid" data-form="login">${field("Username", "username", "", "text", 'required autocomplete="username"')}${field("Password", "password", "", "password", 'required autocomplete="current-password" maxlength="128"')}<div class="form-error" role="alert">${esc(new URLSearchParams(location.search).get("message") || "")}</div><button class="button" type="submit">Sign in to workspace →</button></form>${button("Forgot password?", "forgot-password", "", true)}<small>Staff password reset? Ask your manager.</small>${!isAndroidApp ? '<p><a class="button light" href="https://sajilo-restaurant.aryalprabesh300.workers.dev/download/Sajilo-Restaurant-release.apk?v=1.11">Download Android app · v1.11</a></p>' : ""}${isAndroidApp ? '<div class="ios-install"><b>Android app</b><span>Online, offline and update notices</span></div>' : isIos && !isStandaloneApp ? '<div class="ios-install"><b>Install on iPhone</b><span>Open this page in Safari, tap Share, then choose <b>Add to Home Screen</b>.</span></div>' : ""}</section></main>`;
         return;
       }
       // Open saved work immediately, even when a network request would hang.
